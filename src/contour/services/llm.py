@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field
 from contour.models import EnrichedBacklogItem, RiskFlag, SprintRequest, TeamMemberInput
 
 try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - optional runtime dependency
+    OpenAI = None
+
+try:
     from langchain_core.output_parsers import JsonOutputParser
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
@@ -38,6 +43,11 @@ class _PlanProposal(BaseModel):
     risks: list[RiskFlag] = Field(default_factory=list)
 
 
+def _is_gpt5_family_model(model_name: str) -> bool:
+    normalized = model_name.strip().lower()
+    return normalized.startswith("gpt-5")
+
+
 class LLMService:
     """LLM-backed planning service with a deterministic fallback."""
 
@@ -46,23 +56,42 @@ class LLMService:
         model_name: str | None = None,
         temperature: float = 0.2,
         prefer_llm: bool = True,
+        reasoning_effort: str | None = None,
+        text_verbosity: str | None = None,
     ):
-        self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.model_name = model_name or os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
         self.temperature = temperature
         self.prefer_llm = prefer_llm
+        self.reasoning_effort = reasoning_effort
+        self.text_verbosity = text_verbosity
+        if _is_gpt5_family_model(self.model_name):
+            self.reasoning_effort = self.reasoning_effort or os.getenv("OPENAI_REASONING_EFFORT") or "low"
+            self.text_verbosity = self.text_verbosity or os.getenv("OPENAI_TEXT_VERBOSITY")
         self._enrichment_chain = None
         self._plan_chain = None
+        self._responses_client = None
 
-        if (
-            prefer_llm
-            and ChatOpenAI is not None
-            and ChatPromptTemplate is not None
-            and JsonOutputParser is not None
-            and os.getenv("OPENAI_API_KEY")
-        ):
-            self._build_chains()
+        if prefer_llm and os.getenv("OPENAI_API_KEY"):
+            if _is_gpt5_family_model(self.model_name) and OpenAI is not None:
+                self._responses_client = OpenAI()
+            elif (
+                ChatOpenAI is not None
+                and ChatPromptTemplate is not None
+                and JsonOutputParser is not None
+            ):
+                self._build_chains()
 
     def enrich_backlog(self, request: SprintRequest) -> list[EnrichedBacklogItem]:
+        if self._responses_client is not None:
+            try:
+                result = self._invoke_responses_json(
+                    self._build_enrichment_prompt(request)
+                )
+                batch = _EnrichmentBatch.model_validate(result)
+                if len(batch.items) == len(request.backlog_items):
+                    return batch.items
+            except Exception:
+                pass
         if self._enrichment_chain is not None:
             try:
                 result = self._enrichment_chain.invoke(
@@ -80,6 +109,15 @@ class LLMService:
         request: SprintRequest,
         enriched_items: list[EnrichedBacklogItem],
     ) -> dict[str, Any]:
+        if self._responses_client is not None:
+            try:
+                result = self._invoke_responses_json(
+                    self._build_plan_prompt(request, enriched_items)
+                )
+                proposal = _PlanProposal.model_validate(result)
+                return proposal.model_dump()
+            except Exception:
+                pass
         if self._plan_chain is not None:
             try:
                 result = self._plan_chain.invoke(
@@ -119,6 +157,67 @@ class LLMService:
             ]
         )
         self._plan_chain = plan_prompt | llm | plan_parser
+
+    def _invoke_responses_json(self, prompt: str) -> dict[str, Any]:
+        if self._responses_client is None:
+            raise RuntimeError("OpenAI Responses client is not configured")
+
+        response = self._responses_client.responses.create(
+            **self._build_responses_request_options(prompt)
+        )
+        return self._parse_json_payload(self._extract_output_text(response))
+
+    def _build_responses_request_options(self, prompt: str) -> dict[str, Any]:
+        options: dict[str, Any] = {
+            "model": self.model_name,
+            "input": prompt,
+        }
+        if self.reasoning_effort:
+            options["reasoning"] = {"effort": self.reasoning_effort}
+        if self.text_verbosity:
+            options["text"] = {"verbosity": self.text_verbosity}
+        return options
+
+    @staticmethod
+    def _extract_output_text(response: Any) -> str:
+        output_text = getattr(response, "output_text", None)
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text
+
+        fragments: list[str] = []
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", None) != "message":
+                continue
+            for content in getattr(item, "content", []) or []:
+                if getattr(content, "type", None) not in {"output_text", "text"}:
+                    continue
+                text = getattr(content, "text", "")
+                if text:
+                    fragments.append(text)
+        return "\n".join(fragments)
+
+    @staticmethod
+    def _parse_json_payload(raw_text: str) -> dict[str, Any]:
+        cleaned = raw_text.strip()
+        fenced_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, flags=re.DOTALL | re.IGNORECASE)
+        if fenced_match:
+            cleaned = fenced_match.group(1).strip()
+
+        candidates = [cleaned]
+        json_start = cleaned.find("{")
+        json_end = cleaned.rfind("}")
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            candidates.append(cleaned[json_start : json_end + 1])
+
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+
+        raise ValueError("Model response did not contain a valid JSON object")
 
     def _build_enrichment_prompt(self, request: SprintRequest) -> str:
         payload = {

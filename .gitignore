@@ -2,7 +2,6 @@
 .env
 .env.*
 !.env.example
-!apps/web/.env.local.example
 
 # Python bytecode and caches
 __pycache__/
@@ -32,11 +31,6 @@ site/
 .eggs/
 *.egg-info/
 pip-wheel-metadata/
-apps/web/.next/
-apps/web/coverage/
-apps/web/node_modules/
-apps/web/playwright-report/
-apps/web/test-results/
 
 # Streamlit local secrets
 .streamlit/secrets.toml
