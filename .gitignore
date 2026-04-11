@@ -1,1 +1,48 @@
+# Environment and secrets
 .env
+.env.*
+!.env.example
+!apps/web/.env.local.example
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Packaging and build outputs
+build/
+dist/
+site/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+apps/web/.next/
+apps/web/coverage/
+apps/web/node_modules/
+apps/web/playwright-report/
+apps/web/test-results/
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/

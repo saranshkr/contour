@@ -285,7 +285,7 @@ class LLMService:
             return sorted(set(matches))
 
         heuristics = {
-            "frontend": ["ui", "streamlit", "frontend"],
+            "frontend": ["ui", "frontend", "react", "next.js", "web"],
             "backend": ["api", "service", "pipeline", "backend"],
             "jira": ["jira", "atlassian"],
             "integration": ["integration", "sync", "handoff"],
