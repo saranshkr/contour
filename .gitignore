@@ -32,6 +32,13 @@ site/
 *.egg-info/
 pip-wheel-metadata/
 
+# Frontend dependencies and build artifacts
+node_modules/
+.next/
+coverage/
+playwright-report/
+test-results/
+
 # Streamlit local secrets
 .streamlit/secrets.toml
 .streamlit/credentials.toml
