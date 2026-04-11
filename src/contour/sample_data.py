@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import json
 
+from contour.models import SprintRequest
+
 DEFAULT_SPRINT_NAME = "Sprint 18"
 DEFAULT_GOAL = "Ship a reliable Contour MVP planning and Jira handoff workflow."
 
 DEFAULT_BACKLOG_ITEMS = [
     {
         "id": "CTR-101",
-        "title": "Build Contour intake screen",
-        "description": "Create a Streamlit intake experience for sprint goal, backlog items, and team roster entry.",
+        "title": "Build Contour planning workspace",
+        "description": "Create a web experience for sprint goal, backlog items, and team roster entry.",
         "priority": "High",
         "dependencies": [],
         "owner_hint": "Avery",
-        "labels": ["frontend", "streamlit"],
+        "labels": ["frontend", "web-ui"],
     },
     {
         "id": "CTR-102",
@@ -39,7 +41,7 @@ DEFAULT_TEAM_MEMBERS = [
     {
         "name": "Avery",
         "role": "Frontend Engineer",
-        "skills": ["frontend", "streamlit", "ui"],
+        "skills": ["frontend", "react", "ui"],
         "capacity_points": 8,
     },
     {
@@ -63,3 +65,12 @@ def backlog_seed_json() -> str:
 
 def team_seed_json() -> str:
     return json.dumps(DEFAULT_TEAM_MEMBERS, indent=2)
+
+
+def build_sample_request() -> SprintRequest:
+    return SprintRequest(
+        sprint_name=DEFAULT_SPRINT_NAME,
+        goal=DEFAULT_GOAL,
+        backlog_items=DEFAULT_BACKLOG_ITEMS,
+        team_members=DEFAULT_TEAM_MEMBERS,
+    )

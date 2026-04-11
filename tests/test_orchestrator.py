@@ -68,7 +68,7 @@ def build_request() -> SprintRequest:
             {
                 "id": "CTR-1",
                 "title": "Create intake screen",
-                "description": "Build the Streamlit input flow for sprint planning.",
+                "description": "Build the web intake flow for sprint planning.",
                 "priority": "High",
                 "labels": ["frontend"],
             },
@@ -84,7 +84,7 @@ def build_request() -> SprintRequest:
             {
                 "name": "Avery",
                 "role": "Frontend Engineer",
-                "skills": ["frontend", "streamlit"],
+                "skills": ["frontend", "react"],
                 "capacity_points": 5,
             },
             {
@@ -104,7 +104,7 @@ class OrchestratorTests(unittest.TestCase):
             EnrichedBacklogItem(
                 id="CTR-1",
                 title="Create intake screen",
-                description="Build the Streamlit input flow for sprint planning.",
+                description="Build the web intake flow for sprint planning.",
                 priority="High",
                 labels=["frontend"],
                 estimated_points=5,
