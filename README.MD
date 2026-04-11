@@ -28,9 +28,13 @@ Set the following environment variables for Jira handoff and live LLM calls:
 
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL` (optional)
+- `OPENAI_REASONING_EFFORT` (optional, recommended for GPT-5-family models)
+- `OPENAI_TEXT_VERBOSITY` (optional)
 - `JIRA_BASE_URL`
 - `JIRA_EMAIL`
 - `JIRA_API_TOKEN`
+
+Contour now uses the OpenAI Responses API automatically for GPT-5-family models and keeps the existing LangChain chat path for older models. A good default for this repo is `OPENAI_MODEL=gpt-5.4-mini` with `OPENAI_REASONING_EFFORT=low`.
 
 ## Testing
 
