@@ -101,7 +101,7 @@ test("happy path from sample intake to Jira handoff", async ({ page }) => {
     });
   });
 
-  await page.goto("/");
+  await page.goto("/demo");
   await page.getByRole("button", { name: /load sample data/i }).click();
   await expect(page.getByLabel(/sprint name/i)).toHaveValue("Sprint 18");
   await expect(page.getByLabel(/sprint goal/i)).toHaveValue("Ship the Contour MVP flow");
