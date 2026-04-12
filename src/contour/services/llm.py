@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections import Counter
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from contour.models import EnrichedBacklogItem, RiskFlag, SprintRequest, TeamMemberInput
+from contour.models import (
+    EmployeeRecord,
+    NormalizedTask,
+    SprintRequest,
+    STORY_POINT_BUCKETS,
+)
 
 try:
     from openai import OpenAI
@@ -25,22 +29,8 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     ChatOpenAI = None
 
 
-class _EnrichmentBatch(BaseModel):
-    items: list[EnrichedBacklogItem]
-
-
-class _PlanProposalItem(BaseModel):
-    id: str
-    recommended_assignee: str
-    alternative_assignees: list[str] = Field(default_factory=list)
-    selection_rationale: str
-    assignment_rationale: str
-
-
-class _PlanProposal(BaseModel):
-    selected_items: list[_PlanProposalItem] = Field(default_factory=list)
-    deferred_ids: list[str] = Field(default_factory=list)
-    risks: list[RiskFlag] = Field(default_factory=list)
+class _NormalizedTaskBatch(BaseModel):
+    items: list[NormalizedTask]
 
 
 def _is_gpt5_family_model(model_name: str) -> bool:
@@ -49,7 +39,7 @@ def _is_gpt5_family_model(model_name: str) -> bool:
 
 
 class LLMService:
-    """LLM-backed planning service with a deterministic fallback."""
+    """LLM-backed task normalization with a deterministic fallback."""
 
     def __init__(
         self,
@@ -67,8 +57,7 @@ class LLMService:
         if _is_gpt5_family_model(self.model_name):
             self.reasoning_effort = self.reasoning_effort or os.getenv("OPENAI_REASONING_EFFORT") or "low"
             self.text_verbosity = self.text_verbosity or os.getenv("OPENAI_TEXT_VERBOSITY")
-        self._enrichment_chain = None
-        self._plan_chain = None
+        self._normalization_chain = None
         self._responses_client = None
 
         if prefer_llm and os.getenv("OPENAI_API_KEY"):
@@ -79,84 +68,49 @@ class LLMService:
                 and ChatPromptTemplate is not None
                 and JsonOutputParser is not None
             ):
-                self._build_chains()
+                self._build_chain()
 
-    def enrich_backlog(self, request: SprintRequest) -> list[EnrichedBacklogItem]:
-        if self._responses_client is not None:
-            try:
-                result = self._invoke_responses_json(
-                    self._build_enrichment_prompt(request)
-                )
-                batch = _EnrichmentBatch.model_validate(result)
-                if len(batch.items) == len(request.backlog_items):
-                    return batch.items
-            except Exception:
-                pass
-        if self._enrichment_chain is not None:
-            try:
-                result = self._enrichment_chain.invoke(
-                    {"prompt": self._build_enrichment_prompt(request)}
-                )
-                batch = _EnrichmentBatch.model_validate(result)
-                if len(batch.items) == len(request.backlog_items):
-                    return batch.items
-            except Exception:
-                pass
-        return self._fallback_enrichment(request)
-
-    def propose_plan(
+    def normalize_tasks(
         self,
         request: SprintRequest,
-        enriched_items: list[EnrichedBacklogItem],
-    ) -> dict[str, Any]:
+        employees: list[EmployeeRecord],
+    ) -> list[NormalizedTask]:
         if self._responses_client is not None:
             try:
                 result = self._invoke_responses_json(
-                    self._build_plan_prompt(request, enriched_items)
+                    self._build_normalization_prompt(request, employees)
                 )
-                proposal = _PlanProposal.model_validate(result)
-                return proposal.model_dump()
+                batch = _NormalizedTaskBatch.model_validate(result)
+                if len(batch.items) == len(request.tasks):
+                    return batch.items
             except Exception:
                 pass
-        if self._plan_chain is not None:
+        if self._normalization_chain is not None:
             try:
-                result = self._plan_chain.invoke(
-                    {"prompt": self._build_plan_prompt(request, enriched_items)}
+                result = self._normalization_chain.invoke(
+                    {"prompt": self._build_normalization_prompt(request, employees)}
                 )
-                proposal = _PlanProposal.model_validate(result)
-                return proposal.model_dump()
+                batch = _NormalizedTaskBatch.model_validate(result)
+                if len(batch.items) == len(request.tasks):
+                    return batch.items
             except Exception:
                 pass
-        return self._fallback_plan(request, enriched_items)
+        return self._fallback_normalization(request, employees)
 
-    def _build_chains(self) -> None:
+    def _build_chain(self) -> None:
         llm = ChatOpenAI(model_name=self.model_name, temperature=self.temperature)
-
-        enrichment_parser = JsonOutputParser(pydantic_object=_EnrichmentBatch)
-        enrichment_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are Contour, an expert sprint planning copilot. "
-                    "Normalize backlog items for planning and return JSON only.",
-                ),
-                ("user", "{prompt}"),
-            ]
-        )
-        self._enrichment_chain = enrichment_prompt | llm | enrichment_parser
-
-        plan_parser = JsonOutputParser(pydantic_object=_PlanProposal)
-        plan_prompt = ChatPromptTemplate.from_messages(
+        parser = JsonOutputParser(pydantic_object=_NormalizedTaskBatch)
+        prompt = ChatPromptTemplate.from_messages(
             [
                 (
                     "system",
                     "You are Contour, an expert engineering planning copilot. "
-                    "Recommend sprint scope, ownership, and risks. Return JSON only.",
+                    "Normalize natural-language tasks into Jira-ready planning records and return JSON only.",
                 ),
                 ("user", "{prompt}"),
             ]
         )
-        self._plan_chain = plan_prompt | llm | plan_parser
+        self._normalization_chain = prompt | llm | parser
 
     def _invoke_responses_json(self, prompt: str) -> dict[str, Any]:
         if self._responses_client is None:
@@ -219,225 +173,148 @@ class LLMService:
 
         raise ValueError("Model response did not contain a valid JSON object")
 
-    def _build_enrichment_prompt(self, request: SprintRequest) -> str:
-        payload = {
-            "sprint_name": request.sprint_name,
-            "goal": request.goal,
-            "backlog_items": [item.model_dump() for item in request.backlog_items],
-            "team_members": [member.model_dump() for member in request.team_members],
-        }
-        return "\n".join(
-            [
-                "Enrich each backlog item for sprint planning.",
-                "Infer estimated_points using story point buckets 1, 2, 3, 5, or 8.",
-                "Infer required_skills based on the backlog content and team context.",
-                "Flag ambiguity when the work is vague or underspecified.",
-                "Return an items array with one enriched record per input backlog item.",
-                json.dumps(payload, indent=2),
-            ]
-        )
-
-    def _build_plan_prompt(
+    def _build_normalization_prompt(
         self,
         request: SprintRequest,
-        enriched_items: list[EnrichedBacklogItem],
+        employees: list[EmployeeRecord],
     ) -> str:
         payload = {
             "sprint_name": request.sprint_name,
             "goal": request.goal,
-            "enriched_items": [item.model_dump() for item in enriched_items],
-            "team_members": [member.model_dump() for member in request.team_members],
+            "tasks": [task.model_dump() for task in request.tasks],
+            "employees": [employee.model_dump(exclude={"jira_account_id"}) for employee in employees],
         }
         return "\n".join(
             [
-                "Create a draft sprint plan.",
-                "Choose the sprint items that best fit the goal and team capacity.",
-                "Recommend one primary assignee and up to two alternatives for each selected item.",
-                "Return selected_items, deferred_ids, and risks.",
+                "Normalize each natural-language task into a Jira-ready planning record.",
+                "Return JSON only with one output item per input task.",
+                "For each item, include task_id, source_index, task_text, owner_hint, title, description, priority, jira_issue_type, story_points, required_skills, and estimation_rationale.",
+                "Priority must be one of low, medium, or high.",
+                "jira_issue_type must be either Story or Task.",
+                f"story_points must be one of {', '.join(str(bucket) for bucket in STORY_POINT_BUCKETS)}.",
+                "Estimate story_points using priority, implementation complexity, and the skills required for the work.",
+                "Infer required_skills using only the task text and the provided employee roster.",
+                "Use Story for product-facing or user-visible work and Task for platform, integration, operational, or internal work.",
+                "Write concise Jira-style titles and actionable descriptions.",
                 json.dumps(payload, indent=2),
             ]
         )
 
-    def _fallback_enrichment(self, request: SprintRequest) -> list[EnrichedBacklogItem]:
-        all_team_skills = [skill for member in request.team_members for skill in member.skills]
-        enriched: list[EnrichedBacklogItem] = []
-        for item in request.backlog_items:
-            required_skills = self._infer_required_skills(item.title, item.description, item.labels, all_team_skills)
-            ambiguity_flags = self._infer_ambiguity_flags(item.description)
-            dependency_signals = list(item.dependencies)
-            if "depends on" in item.description.lower():
-                dependency_signals.append("dependency noted in description")
-
-            confidence = 0.95
-            confidence -= 0.15 * len(ambiguity_flags)
-            confidence -= 0.1 * len(dependency_signals)
-
-            enriched.append(
-                EnrichedBacklogItem(
-                    **item.model_dump(),
-                    estimated_points=self._estimate_points(item.title, item.description, item.dependencies),
-                    required_skills=required_skills,
-                    ambiguity_flags=ambiguity_flags,
-                    dependency_signals=dependency_signals,
-                    analysis_confidence=max(0.3, round(confidence, 2)),
-                )
-            )
-        return enriched
-
-    def _fallback_plan(
+    def _fallback_normalization(
         self,
         request: SprintRequest,
-        enriched_items: list[EnrichedBacklogItem],
-    ) -> dict[str, Any]:
-        remaining_total = sum(member.capacity_points for member in request.team_members)
-        selected_items = []
-        deferred_ids = []
-        risks: list[RiskFlag] = []
-
-        for item in sorted(
-            enriched_items,
-            key=lambda enriched: (
-                self._priority_score(enriched.priority),
-                enriched.analysis_confidence,
-                -enriched.estimated_points,
-            ),
-            reverse=True,
-        ):
-            if item.estimated_points > remaining_total:
-                deferred_ids.append(item.id)
-                continue
-
-            assignee, alternatives = self._rank_assignees(item, request.team_members)
-            selected_items.append(
-                {
-                    "id": item.id,
-                    "recommended_assignee": assignee,
-                    "alternative_assignees": alternatives,
-                    "selection_rationale": (
-                        f"Included because {item.id} aligns to the sprint goal and fits within the "
-                        f"overall sprint budget at {item.estimated_points} points."
-                    ),
-                    "assignment_rationale": (
-                        f"Assigned to {assignee} based on the best apparent skill match and available capacity."
-                    ),
-                }
+        employees: list[EmployeeRecord],
+    ) -> list[NormalizedTask]:
+        all_skills = [skill for employee in employees for skill in employee.skills]
+        return [
+            NormalizedTask(
+                task_id=f"TASK-{index + 1}",
+                source_index=index,
+                task_text=task.text,
+                owner_hint=task.owner_hint,
+                title=self._infer_title(task.text),
+                description=self._infer_description(task.text),
+                priority=self._infer_priority(task.text),
+                jira_issue_type=self._infer_issue_type(task.text),
+                story_points=self._estimate_story_points(task.text, all_skills),
+                required_skills=self._infer_required_skills(task.text, all_skills),
+                estimation_rationale=self._build_estimation_rationale(task.text),
             )
-            remaining_total -= item.estimated_points
+            for index, task in enumerate(request.tasks)
+        ]
 
-            if item.ambiguity_flags:
-                risks.append(
-                    RiskFlag(
-                        severity="medium",
-                        category="ambiguity",
-                        message=f"{item.id} may need clarification before development starts.",
-                        affected_items=[item.id],
-                        suggested_action="Review the ticket details and tighten the acceptance criteria.",
-                    )
-                )
+    def _infer_title(self, task_text: str) -> str:
+        clipped = task_text.strip().split(".")[0]
+        words = clipped.split()
+        if len(words) <= 8:
+            return clipped.rstrip(".")
+        return " ".join(words[:8]).rstrip(".")
 
-        for item in enriched_items:
-            if item.id not in {selected["id"] for selected in selected_items} and item.id not in deferred_ids:
-                deferred_ids.append(item.id)
+    def _infer_description(self, task_text: str) -> str:
+        text = task_text.strip()
+        return text if text.endswith(".") else f"{text}."
 
-        return {
-            "selected_items": selected_items,
-            "deferred_ids": deferred_ids,
-            "risks": [risk.model_dump() for risk in risks],
-        }
+    def _infer_priority(self, task_text: str) -> str:
+        text = task_text.lower()
+        if any(token in text for token in ("urgent", "critical", "immediately", "blocker", "must")):
+            return "high"
+        if any(token in text for token in ("nice to have", "later", "follow-up", "polish")):
+            return "low"
+        return "medium"
 
-    def _estimate_points(self, title: str, description: str, dependencies: list[str]) -> int:
-        text = f"{title} {description}".lower()
-        complexity_score = 1
-        complexity_score += min(len(dependencies), 2)
-        complexity_score += len(re.findall(r"\b(api|integration|workflow|approval|analytics|auth|migration)\b", text))
-        if len(description.split()) > 20:
-            complexity_score += 1
-        if len(description.split()) > 40:
-            complexity_score += 1
+    def _infer_issue_type(self, task_text: str) -> str:
+        text = task_text.lower()
+        if any(
+            token in text
+            for token in ("integration", "infra", "migration", "automation", "pipeline", "backend", "api")
+        ):
+            return "Task"
+        return "Story"
 
-        if complexity_score <= 1:
-            return 1
-        if complexity_score == 2:
-            return 2
-        if complexity_score == 3:
-            return 3
-        if complexity_score == 4:
-            return 5
-        return 8
-
-    def _infer_required_skills(
-        self,
-        title: str,
-        description: str,
-        labels: list[str],
-        team_skills: list[str],
-    ) -> list[str]:
-        combined_text = " ".join([title, description, " ".join(labels)]).lower()
-        normalized_skill_map = {self._normalize(skill): skill for skill in team_skills}
-        matches = []
+    def _infer_required_skills(self, task_text: str, employee_skills: list[str]) -> list[str]:
+        normalized_text = self._normalize(task_text)
+        normalized_skill_map = {self._normalize(skill): skill for skill in employee_skills}
+        matches: list[str] = []
         for normalized_skill, original in normalized_skill_map.items():
             token = normalized_skill.replace("-", " ")
-            if token in combined_text or normalized_skill in self._normalize(combined_text):
+            if token in task_text.lower() or normalized_skill in normalized_text:
                 matches.append(original)
 
         if matches:
-            return sorted(set(matches))
+            return sorted({skill for skill in matches})
 
         heuristics = {
-            "frontend": ["ui", "frontend", "react", "next.js", "web"],
-            "backend": ["api", "service", "pipeline", "backend"],
+            "frontend": ["ui", "frontend", "react", "web", "page"],
+            "backend": ["backend", "api", "service"],
             "jira": ["jira", "atlassian"],
             "integration": ["integration", "sync", "handoff"],
-            "ai": ["llm", "ai", "prompt"],
-            "python": ["python"],
+            "ai": ["ai", "llm", "model"],
+            "python": ["python", "fastapi"],
+            "automation": ["automation", "workflow", "pipeline"],
         }
         inferred = [
             skill
             for skill, keywords in heuristics.items()
-            if any(keyword in combined_text for keyword in keywords)
+            if any(keyword in task_text.lower() for keyword in keywords)
         ]
         return inferred
 
-    def _infer_ambiguity_flags(self, description: str) -> list[str]:
-        lowered = description.lower()
-        flags = []
-        if len(description.split()) < 8:
-            flags.append("description is brief")
-        if any(token in lowered for token in ("tbd", "todo", "etc", "somehow", "improve")):
-            flags.append("scope is underspecified")
-        if "?" in description:
-            flags.append("open questions remain")
-        return flags
+    def _estimate_story_points(self, task_text: str, employee_skills: list[str]) -> int:
+        text = task_text.lower()
+        priority = self._infer_priority(task_text)
+        required_skills = self._infer_required_skills(task_text, employee_skills)
 
-    def _rank_assignees(
-        self,
-        item: EnrichedBacklogItem,
-        team_members: list[TeamMemberInput],
-    ) -> tuple[str, list[str]]:
-        scored = sorted(
-            team_members,
-            key=lambda member: (
-                self._assignee_score(item, member),
-                member.capacity_points,
-            ),
-            reverse=True,
+        score = 1
+        score += 2 if priority == "high" else 1 if priority == "medium" else 0
+        score += min(len(required_skills), 2)
+        score += len(
+            re.findall(
+                r"\b(api|integration|workflow|migration|analytics|auth|dashboard|approval|jira)\b",
+                text,
+            )
         )
-        if not scored:
-            return "Unassigned", []
-        primary = scored[0].name
-        alternatives = [member.name for member in scored[1:3]]
-        return primary, alternatives
+        if len(task_text.split()) > 18:
+            score += 1
+        if len(task_text.split()) > 35:
+            score += 1
 
-    def _assignee_score(self, item: EnrichedBacklogItem, member: TeamMemberInput) -> tuple[int, int]:
-        required = Counter(self._normalize(skill) for skill in item.required_skills)
-        available = Counter(self._normalize(skill) for skill in member.skills)
-        overlap = sum((required & available).values())
-        owner_hint_bonus = 1 if item.owner_hint and member.name.lower() == item.owner_hint.lower() else 0
-        return overlap, owner_hint_bonus
+        if score <= 2:
+            return 1
+        if score == 3:
+            return 2
+        if score == 4:
+            return 3
+        if score in (5, 6):
+            return 5
+        return 8
 
-    def _priority_score(self, priority: str) -> int:
-        order = {"critical": 4, "highest": 4, "high": 3, "medium": 2, "low": 1, "lowest": 1}
-        return order.get(priority.strip().lower(), 2)
+    def _build_estimation_rationale(self, task_text: str) -> str:
+        priority = self._infer_priority(task_text)
+        issue_type = self._infer_issue_type(task_text)
+        return (
+            f"Estimated from {priority} priority work, the likely implementation complexity, "
+            f"and the depth of coordination implied by this {issue_type.lower()}."
+        )
 
     def _normalize(self, value: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
