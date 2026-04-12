@@ -28,6 +28,10 @@ PRIORITY_RANK = {
     "lowest": 1,
 }
 
+LOW_CONFIDENCE_THRESHOLD = 0.6
+VERY_LOW_CONFIDENCE_THRESHOLD = 0.45
+HIGH_UTILIZATION_THRESHOLD = 0.85
+
 
 def plan_sprint(request: SprintRequest, llm_service: LLMService | None = None) -> SprintPlan:
     llm = llm_service or LLMService()
@@ -91,6 +95,13 @@ def _repair_plan(
             continue
 
         item = item_lookup[item_id]
+        defer_risk = _selection_gate_risk(item)
+        if defer_risk is not None:
+            risks.append(defer_risk)
+            deferred_items.append(item)
+            deferred_ids.add(item.id)
+            continue
+
         recommended = _resolve_member_name(raw_item.get("recommended_assignee"), team_members)
         if not recommended:
             recommended = _choose_best_assignee(item, team_members, remaining)
@@ -116,6 +127,12 @@ def _repair_plan(
 
     for item in _sorted_items(enriched_items):
         if item.id in selected_ids or item.id in deferred_ids or item.id in explicitly_deferred:
+            continue
+        defer_risk = _selection_gate_risk(item)
+        if defer_risk is not None:
+            risks.append(defer_risk)
+            deferred_items.append(item)
+            deferred_ids.add(item.id)
             continue
         recommended = _choose_best_assignee(item, team_members, remaining)
         alternatives = _build_alternatives(item, team_members, recommended, remaining)
@@ -148,8 +165,9 @@ def _repair_plan(
             deferred_ids.add(item.id)
 
     _append_item_risks(selected_items, deferred_items, team_members, risks)
-
     capacity_summary = _build_capacity_summary(team_members, assigned_points)
+    _append_capacity_risks(capacity_summary, deferred_items, risks)
+
     return SprintPlan(
         sprint_name=request.sprint_name,
         goal=request.goal,
@@ -287,6 +305,20 @@ def _append_item_risks(
     all_team_skills = {_slugify(skill) for member in team_members for skill in member.skills}
 
     for item in selected_items:
+        if item.analysis_confidence < LOW_CONFIDENCE_THRESHOLD:
+            severity = "high" if item.analysis_confidence < VERY_LOW_CONFIDENCE_THRESHOLD else "medium"
+            risks.append(
+                RiskFlag(
+                    severity=severity,
+                    category="low-confidence",
+                    message=(
+                        f"{item.id} was selected with low planning confidence "
+                        f"({item.analysis_confidence:.2f})."
+                    ),
+                    affected_items=[item.id],
+                    suggested_action="Review the scope, details, and estimates before work starts.",
+                )
+            )
         if item.ambiguity_flags:
             risks.append(
                 RiskFlag(
@@ -305,6 +337,23 @@ def _append_item_risks(
                     message=f"{item.id} depends on {', '.join(item.dependency_signals)}.",
                     affected_items=[item.id],
                     suggested_action="Confirm the dependency is unblocked during sprint planning.",
+                )
+            )
+        assigned_member = next(
+            (member for member in team_members if member.name == item.recommended_assignee),
+            None,
+        )
+        if assigned_member and item.required_skills and _skill_overlap(item, assigned_member) == 0:
+            risks.append(
+                RiskFlag(
+                    severity="medium",
+                    category="assignment",
+                    message=(
+                        f"{item.id} is assigned to {item.recommended_assignee} without a clear "
+                        "required-skill match."
+                    ),
+                    affected_items=[item.id],
+                    suggested_action="Review ownership or refine the required skills before starting work.",
                 )
             )
         missing_skills = [_slugify(skill) for skill in item.required_skills if _slugify(skill) not in all_team_skills]
@@ -328,6 +377,81 @@ def _append_item_risks(
                     message=f"{item.id} is high priority but was deferred from the sprint draft.",
                     affected_items=[item.id],
                     suggested_action="Review whether lower-priority work should be swapped out.",
+                )
+            )
+
+
+def _append_capacity_risks(
+    capacity_summary: CapacitySummary,
+    deferred_items: list[EnrichedBacklogItem],
+    risks: list[RiskFlag],
+) -> None:
+    if capacity_summary.total_capacity_points <= 0 or capacity_summary.selected_points <= 0:
+        return
+
+    utilization = capacity_summary.selected_points / capacity_summary.total_capacity_points
+    high_priority_deferred = [
+        item.id for item in deferred_items if _priority_score(item.priority) >= PRIORITY_RANK["high"]
+    ]
+
+    if utilization >= 1:
+        severity = "high" if high_priority_deferred else "medium"
+        message = (
+            "The sprint is fully allocated with no remaining team capacity."
+            if not high_priority_deferred
+            else "The sprint is fully allocated and high-priority work was deferred."
+        )
+        risks.append(
+            RiskFlag(
+                severity=severity,
+                category="capacity",
+                message=message,
+                affected_items=high_priority_deferred,
+                suggested_action="Reduce scope or add capacity before committing to the sprint.",
+            )
+        )
+    elif utilization >= HIGH_UTILIZATION_THRESHOLD:
+        risks.append(
+            RiskFlag(
+                severity="medium",
+                category="capacity",
+                message=(
+                    "The sprint is close to full utilization "
+                    f"({capacity_summary.selected_points}/{capacity_summary.total_capacity_points} pts)."
+                ),
+                affected_items=high_priority_deferred,
+                suggested_action="Keep some buffer for interrupts or defer marginal work.",
+            )
+        )
+
+    for allocation in capacity_summary.allocations:
+        if allocation.capacity_points <= 0 or allocation.assigned_points <= 0:
+            continue
+        member_utilization = allocation.assigned_points / allocation.capacity_points
+        if member_utilization >= 1:
+            risks.append(
+                RiskFlag(
+                    severity="medium",
+                    category="capacity",
+                    message=(
+                        f"{allocation.member_name} is fully allocated at "
+                        f"{allocation.assigned_points}/{allocation.capacity_points} pts."
+                    ),
+                    affected_items=[],
+                    suggested_action="Check for concentration risk or rebalance work across the team.",
+                )
+            )
+        elif member_utilization >= HIGH_UTILIZATION_THRESHOLD:
+            risks.append(
+                RiskFlag(
+                    severity="medium",
+                    category="capacity",
+                    message=(
+                        f"{allocation.member_name} is near full allocation at "
+                        f"{allocation.assigned_points}/{allocation.capacity_points} pts."
+                    ),
+                    affected_items=[],
+                    suggested_action="Consider shifting work if new scope or blockers appear mid-sprint.",
                 )
             )
 
@@ -360,6 +484,40 @@ def _build_capacity_summary(
         remaining_points=total_capacity - total_selected,
         allocations=allocations,
     )
+
+
+def _selection_gate_risk(item: EnrichedBacklogItem) -> RiskFlag | None:
+    priority_score = _priority_score(item.priority)
+
+    if item.analysis_confidence < VERY_LOW_CONFIDENCE_THRESHOLD and priority_score < PRIORITY_RANK["high"]:
+        return RiskFlag(
+            severity="medium",
+            category="low-confidence",
+            message=(
+                f"{item.id} was deferred because the planning confidence is too low "
+                f"({item.analysis_confidence:.2f})."
+            ),
+            affected_items=[item.id],
+            suggested_action="Clarify the ticket details and acceptance criteria before reconsidering it.",
+        )
+
+    if (
+        item.analysis_confidence < LOW_CONFIDENCE_THRESHOLD
+        and item.ambiguity_flags
+        and priority_score < PRIORITY_RANK["high"]
+    ):
+        return RiskFlag(
+            severity="medium",
+            category="low-confidence",
+            message=(
+                f"{item.id} was deferred because it remains ambiguous and the planning confidence is low "
+                f"({item.analysis_confidence:.2f})."
+            ),
+            affected_items=[item.id],
+            suggested_action="Resolve the open questions before pulling this item into the sprint.",
+        )
+
+    return None
 
 
 def _build_plan_epic_fields(plan: SprintPlan) -> dict[str, object]:

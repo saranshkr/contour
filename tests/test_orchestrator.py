@@ -187,6 +187,121 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("ambiguity", categories)
         self.assertIn("dependency", categories)
 
+    def test_plan_sprint_defers_low_confidence_non_priority_item(self) -> None:
+        request = SprintRequest(
+            sprint_name="Sprint 20",
+            goal="Defer unclear work",
+            backlog_items=[
+                {
+                    "id": "CTR-10",
+                    "title": "Explore backlog cleanup",
+                    "description": "Investigate options.",
+                    "priority": "Low",
+                }
+            ],
+            team_members=[
+                {
+                    "name": "Jordan",
+                    "role": "Engineer",
+                    "skills": ["backend"],
+                    "capacity_points": 5,
+                }
+            ],
+        )
+        enriched_items = [
+            EnrichedBacklogItem(
+                id="CTR-10",
+                title="Explore backlog cleanup",
+                description="Investigate options.",
+                priority="Low",
+                estimated_points=2,
+                required_skills=["backend"],
+                ambiguity_flags=["description is brief"],
+                dependency_signals=[],
+                analysis_confidence=0.35,
+            )
+        ]
+        fake_llm = FakeLLMService(
+            enriched_items=enriched_items,
+            proposal={
+                "selected_items": [
+                    {
+                        "id": "CTR-10",
+                        "recommended_assignee": "Jordan",
+                        "alternative_assignees": [],
+                        "selection_rationale": "Fits the sprint",
+                        "assignment_rationale": "Single available engineer",
+                    }
+                ],
+                "deferred_ids": [],
+                "risks": [],
+            },
+        )
+
+        plan = plan_sprint(request, llm_service=fake_llm)
+
+        self.assertEqual(len(plan.selected_items), 0)
+        self.assertEqual(len(plan.deferred_items), 1)
+        self.assertIn("low-confidence", {risk.category for risk in plan.risks})
+
+    def test_plan_sprint_flags_low_confidence_and_full_capacity(self) -> None:
+        request = SprintRequest(
+            sprint_name="Sprint 21",
+            goal="Deliver high-priority handoff",
+            backlog_items=[
+                {
+                    "id": "CTR-11",
+                    "title": "Create Jira handoff",
+                    "description": "Build the approved sprint handoff integration.",
+                    "priority": "High",
+                }
+            ],
+            team_members=[
+                {
+                    "name": "Jordan",
+                    "role": "Engineer",
+                    "skills": ["jira", "python"],
+                    "capacity_points": 5,
+                }
+            ],
+        )
+        enriched_items = [
+            EnrichedBacklogItem(
+                id="CTR-11",
+                title="Create Jira handoff",
+                description="Build the approved sprint handoff integration.",
+                priority="High",
+                estimated_points=5,
+                required_skills=["jira"],
+                ambiguity_flags=["description is brief"],
+                dependency_signals=[],
+                analysis_confidence=0.5,
+            )
+        ]
+        fake_llm = FakeLLMService(
+            enriched_items=enriched_items,
+            proposal={
+                "selected_items": [
+                    {
+                        "id": "CTR-11",
+                        "recommended_assignee": "Jordan",
+                        "alternative_assignees": [],
+                        "selection_rationale": "Top sprint priority",
+                        "assignment_rationale": "Best skill match",
+                    }
+                ],
+                "deferred_ids": [],
+                "risks": [],
+            },
+        )
+
+        plan = plan_sprint(request, llm_service=fake_llm)
+
+        categories = {risk.category for risk in plan.risks}
+        self.assertEqual(len(plan.selected_items), 1)
+        self.assertIn("low-confidence", categories)
+        self.assertIn("capacity", categories)
+
     def test_create_plan_epic_requires_approval(self) -> None:
         draft_plan = SprintPlan(
             sprint_name="Sprint 18",
