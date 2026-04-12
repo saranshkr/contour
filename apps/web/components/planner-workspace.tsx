@@ -1,20 +1,19 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import { plannerApi, PlannerApi } from "@/lib/api";
 import { SurfaceSection } from "@/components/surface-section";
 import {
-  BacklogItem,
-  createEmptyBacklogItem,
   createEmptySprintRequest,
-  createEmptyTeamMember,
+  createEmptyTask,
+  EmployeeRecord,
   JiraHandoffResponse,
+  PlanItem,
   SprintPlan,
   SprintRequest,
-  TeamMember,
   sprintRequestSchema,
 } from "@/lib/schemas";
 
@@ -26,10 +25,9 @@ type BannerState = {
   message: string;
 };
 
-const inputClassName =
-  "field-shell w-full";
-
+const inputClassName = "field-shell w-full";
 const labelClassName = "mb-2 block text-xs font-semibold uppercase tracking-[0.28em] text-slate-300/75";
+const STORY_POINT_OPTIONS = [1, 2, 3, 5, 8];
 
 export function PlannerWorkspace({
   apiClient = plannerApi,
@@ -37,12 +35,35 @@ export function PlannerWorkspace({
   apiClient?: PlannerApi;
 }) {
   const [request, setRequest] = useState<SprintRequest>(createEmptySprintRequest());
+  const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
   const [projectKey, setProjectKey] = useState("CTR");
   const [plan, setPlan] = useState<SprintPlan | null>(null);
   const [handoffResult, setHandoffResult] = useState<JiraHandoffResponse | null>(null);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEmployees() {
+      try {
+        const roster = await apiClient.loadEmployees();
+        if (!cancelled) {
+          setEmployees(roster);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBanner({ tone: "error", message: getErrorMessage(error) });
+        }
+      }
+    }
+
+    void loadEmployees();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient]);
 
   const generateLabel = plan ? "Regenerate Draft" : "Generate Draft Plan";
   const handoffDisabled = !plan || plan.approval_state !== "approved" || pendingAction !== null;
@@ -60,22 +81,42 @@ export function PlannerWorkspace({
     setRequest((current) => ({ ...current, ...patch }));
   }
 
-  function updateBacklogItem(index: number, patch: Partial<BacklogItem>) {
+  function updateTask(index: number, patch: Partial<SprintRequest["tasks"][number]>) {
     setRequest((current) => ({
       ...current,
-      backlog_items: current.backlog_items.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item
+      tasks: current.tasks.map((task, taskIndex) =>
+        taskIndex === index ? { ...task, ...patch } : task
       ),
     }));
   }
 
-  function updateTeamMember(index: number, patch: Partial<TeamMember>) {
-    setRequest((current) => ({
-      ...current,
-      team_members: current.team_members.map((member, memberIndex) =>
-        memberIndex === index ? { ...member, ...patch } : member
-      ),
-    }));
+  function updatePlanItem(index: number, patch: Partial<PlanItem>) {
+    setPlan((current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        approval_state: "draft",
+        plan_items: current.plan_items.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, ...patch } : item
+        ),
+      };
+    });
+  }
+
+  function handleAssigneeChange(index: number, employeeId: string) {
+    if (!plan) {
+      return;
+    }
+    const item = plan.plan_items[index];
+    const employee = employees.find((candidate) => candidate.id === employeeId) ?? null;
+
+    updatePlanItem(index, {
+      recommended_assignee: employee?.name ?? null,
+      recommended_assignee_account_id: employee?.jira_account_id ?? null,
+      assignment_status: previewAssignmentStatus(item, employee),
+    });
   }
 
   async function handleLoadSample() {
@@ -157,11 +198,11 @@ export function PlannerWorkspace({
             Sprint Planning Copilot
           </p>
           <h1 className="text-4xl leading-tight text-white sm:text-5xl">
-            Turn backlog context into an approval-ready sprint plan.
+            Turn natural-language tasks into an approval-ready Jira delivery plan.
           </h1>
           <p className="mt-4 max-w-2xl text-base leading-7 text-slate-200/80 sm:text-lg">
-            Contour combines structured intake, AI-backed recommendations, explicit risk review, and a
-            human approval gate before Jira handoff.
+            Contour normalizes freeform work requests, estimates story points, recommends ownership from
+            the built-in employee roster, and keeps a human review gate before Jira creation.
           </p>
         </div>
 
@@ -169,7 +210,7 @@ export function PlannerWorkspace({
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-300/70">Jira Handoff</p>
             <p className="mt-2 text-sm text-slate-300/85">
-              Approval stays mandatory. The handoff action only unlocks once the draft is approved.
+              Approval stays mandatory. The handoff action only unlocks once the reviewed draft is approved.
             </p>
           </div>
           <label className="block">
@@ -246,33 +287,31 @@ export function PlannerWorkspace({
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl text-white">Backlog Items</h2>
-                <p className="mt-1 text-sm text-slate-300/75">Model each candidate item with priority, labels, dependencies, and owner hints.</p>
+                <p className="mt-1 text-sm text-slate-300/75">
+                  Add one natural-language task per card. Keep each task focused enough for Jira ticket generation.
+                </p>
               </div>
               <ActionButton
-                label="Add Backlog Item"
-                onClick={() =>
-                  updateRequest({
-                    backlog_items: [...request.backlog_items, createEmptyBacklogItem(request.backlog_items.length + 1)],
-                  })
-                }
+                label="Add Task"
+                onClick={() => updateRequest({ tasks: [...request.tasks, createEmptyTask(request.tasks.length + 1)] })}
                 disabled={pendingAction !== null}
                 tone="secondary"
               />
             </div>
 
             <div className="space-y-4">
-              {request.backlog_items.map((item, index) => (
-                <div key={`${item.id}-${index}`} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
+              {request.tasks.map((task, index) => (
+                <div key={`task-${index}`} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
                   <div className="mb-4 flex items-center justify-between gap-4">
                     <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-300/70">
-                      Item {index + 1}
+                      Task {index + 1}
                     </p>
-                    {request.backlog_items.length > 1 ? (
+                    {request.tasks.length > 1 ? (
                       <button
                         className="text-sm font-semibold text-red-200 transition hover:text-red-100"
                         onClick={() =>
                           updateRequest({
-                            backlog_items: request.backlog_items.filter((_, itemIndex) => itemIndex !== index),
+                            tasks: request.tasks.filter((_, taskIndex) => taskIndex !== index),
                           })
                         }
                         type="button"
@@ -282,83 +321,25 @@ export function PlannerWorkspace({
                     ) : null}
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <Field label="Item ID">
-                      <input
-                        aria-label={`Backlog item ${index + 1} id`}
-                        className={inputClassName}
-                        value={item.id}
-                        onChange={(event) => updateBacklogItem(index, { id: event.target.value })}
-                      />
-                    </Field>
-                    <Field label="Priority">
-                      <select
-                        aria-label={`Backlog item ${index + 1} priority`}
-                        className={inputClassName}
-                        value={item.priority}
-                        onChange={(event) => updateBacklogItem(index, { priority: event.target.value })}
-                      >
-                        {["Critical", "High", "Medium", "Low"].map((priority) => (
-                          <option key={priority} value={priority}>
-                            {priority}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Title">
-                      <input
-                        aria-label={`Backlog item ${index + 1} title`}
-                        className={inputClassName}
-                        value={item.title}
-                        onChange={(event) => updateBacklogItem(index, { title: event.target.value })}
+                  <div className="grid gap-4 md:grid-cols-[1.4fr_0.6fr]">
+                    <Field label="Task Description">
+                      <textarea
+                        aria-label={`Task ${index + 1} description`}
+                        className={`${inputClassName} min-h-32`}
+                        value={task.text}
+                        onChange={(event) => updateTask(index, { text: event.target.value })}
+                        placeholder="Describe the work in natural language."
                       />
                     </Field>
                     <Field label="Owner Hint">
                       <input
-                        aria-label={`Backlog item ${index + 1} owner hint`}
+                        aria-label={`Task ${index + 1} owner hint`}
                         className={inputClassName}
-                        value={item.owner_hint ?? ""}
-                        onChange={(event) =>
-                          updateBacklogItem(index, { owner_hint: emptyToNull(event.target.value) })
-                        }
-                        placeholder="Optional"
+                        value={task.owner_hint ?? ""}
+                        onChange={(event) => updateTask(index, { owner_hint: emptyToNull(event.target.value) })}
+                        placeholder="Optional teammate name"
                       />
                     </Field>
-                  </div>
-
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <Field label="Description">
-                      <textarea
-                        aria-label={`Backlog item ${index + 1} description`}
-                        className={`${inputClassName} min-h-32`}
-                        value={item.description}
-                        onChange={(event) => updateBacklogItem(index, { description: event.target.value })}
-                      />
-                    </Field>
-                    <div className="grid gap-4">
-                      <Field label="Labels">
-                        <input
-                          aria-label={`Backlog item ${index + 1} labels`}
-                          className={inputClassName}
-                          value={item.labels.join(", ")}
-                          onChange={(event) =>
-                            updateBacklogItem(index, { labels: splitCommaSeparated(event.target.value) })
-                          }
-                          placeholder="frontend, planning, jira"
-                        />
-                      </Field>
-                      <Field label="Dependencies">
-                        <input
-                          aria-label={`Backlog item ${index + 1} dependencies`}
-                          className={inputClassName}
-                          value={item.dependencies.join(", ")}
-                          onChange={(event) =>
-                            updateBacklogItem(index, { dependencies: splitCommaSeparated(event.target.value) })
-                          }
-                          placeholder="CTR-101, CTR-109"
-                        />
-                      </Field>
-                    </div>
                   </div>
                 </div>
               ))}
@@ -366,104 +347,51 @@ export function PlannerWorkspace({
           </div>
 
           <div className="mt-8">
-            <div className="mb-4 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl text-white">Team Context</h2>
-                <p className="mt-1 text-sm text-slate-300/75">Capture roles, current skill coverage, and point capacity for each teammate.</p>
+            <div className="mb-4">
+              <h2 className="text-2xl text-white">Built-in employee roster</h2>
+              <p className="mt-1 text-sm text-slate-300/75">
+                Contour considers the full employee roster for every planning run and uses the Jira account IDs attached to each employee for assignment.
+              </p>
+            </div>
+
+            {employees.length > 0 ? (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {employees.map((employee) => (
+                  <div key={employee.id} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-xl text-white">{employee.name}</h3>
+                        <p className="mt-2 text-sm text-slate-300/80">{employee.role}</p>
+                      </div>
+                      <Tag>{employee.capacity_points} pts</Tag>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {employee.skills.map((skill) => (
+                        <Tag key={`${employee.id}-${skill}`}>{skill}</Tag>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <ActionButton
-                label="Add Team Member"
-                onClick={() =>
-                  updateRequest({
-                    team_members: [...request.team_members, createEmptyTeamMember(request.team_members.length + 1)],
-                  })
-                }
-                disabled={pendingAction !== null}
-                tone="secondary"
-              />
-            </div>
-
-            <div className="space-y-4">
-              {request.team_members.map((member, index) => (
-                <div key={`${member.name}-${index}`} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
-                  <div className="mb-4 flex items-center justify-between gap-4">
-                    <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-300/70">
-                      Member {index + 1}
-                    </p>
-                    {request.team_members.length > 1 ? (
-                      <button
-                        className="text-sm font-semibold text-red-200 transition hover:text-red-100"
-                        onClick={() =>
-                          updateRequest({
-                            team_members: request.team_members.filter((_, memberIndex) => memberIndex !== index),
-                          })
-                        }
-                        type="button"
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <Field label="Name">
-                      <input
-                        aria-label={`Team member ${index + 1} name`}
-                        className={inputClassName}
-                        value={member.name}
-                        onChange={(event) => updateTeamMember(index, { name: event.target.value })}
-                      />
-                    </Field>
-                    <Field label="Role">
-                      <input
-                        aria-label={`Team member ${index + 1} role`}
-                        className={inputClassName}
-                        value={member.role}
-                        onChange={(event) => updateTeamMember(index, { role: event.target.value })}
-                      />
-                    </Field>
-                    <Field label="Skills">
-                      <input
-                        aria-label={`Team member ${index + 1} skills`}
-                        className={inputClassName}
-                        value={member.skills.join(", ")}
-                        onChange={(event) => updateTeamMember(index, { skills: splitCommaSeparated(event.target.value) })}
-                        placeholder="frontend, jira, python"
-                      />
-                    </Field>
-                    <Field label="Capacity Points">
-                      <input
-                        aria-label={`Team member ${index + 1} capacity points`}
-                        className={inputClassName}
-                        type="number"
-                        min={0}
-                        value={String(member.capacity_points)}
-                        onChange={(event) =>
-                          updateTeamMember(index, {
-                            capacity_points: Number.parseInt(event.target.value || "0", 10) || 0,
-                          })
-                        }
-                      />
-                    </Field>
-                  </div>
-                </div>
-              ))}
-            </div>
+            ) : (
+              <EmptyState message="Loading the employee roster for assignment guidance." />
+            )}
           </div>
         </SurfaceSection>
 
         <div className="grid gap-6">
           <SurfaceSection
             eyebrow="Draft Review"
-            title="Inspect the recommendation"
-            description="Contour keeps the reasoning visible so sprint decisions stay explainable."
+            title="Inspect and edit the recommendation"
+            description="Contour keeps issue type, points, assignee, and rationale editable before approval so the final Jira handoff stays intentional."
           >
             {plan ? (
               <>
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <MetricTile label="Selected Points" value={plan.capacity_summary.selected_points} accent="teal" />
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <MetricTile label="Assigned Points" value={plan.capacity_summary.assigned_points} accent="teal" />
+                  <MetricTile label="Unassigned Points" value={plan.capacity_summary.unassigned_points} accent="amber" />
                   <MetricTile label="Total Capacity" value={plan.capacity_summary.total_capacity_points} accent="blue" />
-                  <MetricTile label="Remaining Capacity" value={plan.capacity_summary.remaining_points} accent="amber" />
+                  <MetricTile label="Remaining Capacity" value={plan.capacity_summary.remaining_points} accent="blue" />
                 </div>
 
                 <div className="mt-6 rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
@@ -487,77 +415,163 @@ export function PlannerWorkspace({
                   <p className="mt-4 text-sm leading-7 text-slate-300/80">{plan.goal}</p>
                 </div>
 
-                <ReviewBlock title="Selected Sprint Items">
-                  {plan.selected_items.length > 0 ? (
-                    <div className="space-y-4">
-                      {plan.selected_items.map((item) => (
-                        <div key={item.id} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
-                          <div className="flex flex-wrap items-start justify-between gap-4">
-                            <div>
-                              <h4 className="text-xl text-white">
-                                {item.id} · {item.title}
-                              </h4>
-                              <p className="mt-2 text-sm text-slate-300/80">
-                                {item.estimated_points} pts · Owner: {item.recommended_assignee}
-                              </p>
-                            </div>
-                            {item.required_skills.length > 0 ? (
-                              <div className="flex flex-wrap gap-2">
-                                {item.required_skills.map((skill) => (
-                                  <Tag key={skill}>{skill}</Tag>
-                                ))}
+                <ReviewBlock title="Planned Jira Tickets">
+                  <div className="space-y-4">
+                    {plan.plan_items.map((item, index) => (
+                      <div key={item.task_id} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
+                        <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300/70">
+                              {item.task_id}
+                            </p>
+                            <h4 className="mt-2 text-xl text-white">{item.title}</h4>
+                            <p className="mt-2 text-sm leading-6 text-slate-300/80">{item.task_text}</p>
+                          </div>
+                          <AssignmentBadge status={item.assignment_status} />
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <Field label="Jira Summary">
+                            <input
+                              aria-label={`${item.task_id} summary`}
+                              className={inputClassName}
+                              value={item.title}
+                              onChange={(event) => updatePlanItem(index, { title: event.target.value })}
+                            />
+                          </Field>
+                          <Field label="Issue Type">
+                            <select
+                              aria-label={`${item.task_id} issue type`}
+                              className={inputClassName}
+                              value={item.jira_issue_type}
+                              onChange={(event) =>
+                                updatePlanItem(index, {
+                                  jira_issue_type: event.target.value as PlanItem["jira_issue_type"],
+                                })
+                              }
+                            >
+                              {["Story", "Task"].map((issueType) => (
+                                <option key={issueType} value={issueType}>
+                                  {issueType}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                          <Field label="Priority">
+                            <select
+                              aria-label={`${item.task_id} priority`}
+                              className={inputClassName}
+                              value={item.priority}
+                              onChange={(event) =>
+                                updatePlanItem(index, {
+                                  priority: event.target.value as PlanItem["priority"],
+                                })
+                              }
+                            >
+                              {["high", "medium", "low"].map((priority) => (
+                                <option key={priority} value={priority}>
+                                  {capitalize(priority)}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                          <Field label="Story Points">
+                            <select
+                              aria-label={`${item.task_id} story points`}
+                              className={inputClassName}
+                              value={String(item.story_points)}
+                              onChange={(event) =>
+                                updatePlanItem(index, {
+                                  story_points: Number.parseInt(event.target.value, 10),
+                                })
+                              }
+                            >
+                              {STORY_POINT_OPTIONS.map((points) => (
+                                <option key={points} value={points}>
+                                  {points}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                        </div>
+
+                        <div className="mt-4 grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
+                          <Field label="Jira Description">
+                            <textarea
+                              aria-label={`${item.task_id} description`}
+                              className={`${inputClassName} min-h-32`}
+                              value={item.description}
+                              onChange={(event) => updatePlanItem(index, { description: event.target.value })}
+                            />
+                          </Field>
+                          <Field label="Assignee">
+                            <select
+                              aria-label={`${item.task_id} assignee`}
+                              className={inputClassName}
+                              value={
+                                employees.find(
+                                  (employee) => employee.jira_account_id === item.recommended_assignee_account_id
+                                )?.id ?? ""
+                              }
+                              onChange={(event) => handleAssigneeChange(index, event.target.value)}
+                            >
+                              <option value="">Unassigned</option>
+                              {employees.map((employee) => (
+                                <option key={employee.id} value={employee.id}>
+                                  {employee.name}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {item.required_skills.map((skill) => (
+                            <Tag key={`${item.task_id}-${skill}`}>{skill}</Tag>
+                          ))}
+                        </div>
+
+                        <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                          <CopyBlock title="Estimation rationale" body={item.estimation_rationale} />
+                          <CopyBlock title="Selection rationale" body={item.selection_rationale} />
+                          <CopyBlock title="Assignment rationale" body={item.assignment_rationale} />
+                        </div>
+
+                        {item.alternative_assignees.length > 0 ? (
+                          <p className="mt-4 text-sm text-slate-300/75">
+                            Alternatives: {item.alternative_assignees.join(", ")}
+                          </p>
+                        ) : null}
+
+                        {item.risk_flags.length > 0 ? (
+                          <div className="mt-4 space-y-3">
+                            {item.risk_flags.map((risk) => (
+                              <div
+                                key={`${item.task_id}-${risk.category}-${risk.message}`}
+                                className="rounded-[1.2rem] border border-white/10 bg-slate-950/25 p-4"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <RiskBadge severity={risk.severity} />
+                                  <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-200/75">
+                                    {risk.category}
+                                  </p>
+                                </div>
+                                <p className="mt-3 text-sm leading-7 text-slate-100/90">{risk.message}</p>
                               </div>
-                            ) : null}
+                            ))}
                           </div>
-
-                          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                            <CopyBlock title="Selection rationale" body={item.selection_rationale} />
-                            <CopyBlock title="Assignment rationale" body={item.assignment_rationale} />
-                          </div>
-
-                          {item.alternative_assignees.length > 0 ? (
-                            <p className="mt-4 text-sm text-slate-300/75">
-                              Alternatives: {item.alternative_assignees.join(", ")}
-                            </p>
-                          ) : null}
-                          {item.ambiguity_flags.length > 0 ? (
-                            <p className="mt-2 text-sm text-amber-100/90">
-                              Ambiguity: {item.ambiguity_flags.join(", ")}
-                            </p>
-                          ) : null}
-                          {item.dependency_signals.length > 0 ? (
-                            <p className="mt-2 text-sm text-sky-100/90">
-                              Dependencies: {item.dependency_signals.join(", ")}
-                            </p>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState message="No sprint items were selected." />
-                  )}
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </ReviewBlock>
 
-                <ReviewBlock title="Deferred Items">
-                  {plan.deferred_items.length > 0 ? (
-                    <div className="space-y-3">
-                      {plan.deferred_items.map((item) => (
-                        <div key={item.id} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm text-slate-200/85">
-                          {item.id} · {item.title} ({item.estimated_points} pts)
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState message="No items were deferred." />
-                  )}
-                </ReviewBlock>
-
-                <ReviewBlock title="Capacity by Team Member">
+                <ReviewBlock title="Capacity by Employee">
                   <div className="overflow-hidden rounded-[1.75rem] border border-white/10">
                     <table className="min-w-full divide-y divide-white/10 text-left text-sm text-slate-100">
                       <thead className="bg-white/5 text-xs uppercase tracking-[0.24em] text-slate-300/75">
                         <tr>
-                          <th className="px-4 py-3">Member</th>
+                          <th className="px-4 py-3">Employee</th>
                           <th className="px-4 py-3">Assigned</th>
                           <th className="px-4 py-3">Capacity</th>
                           <th className="px-4 py-3">Remaining</th>
@@ -603,14 +617,14 @@ export function PlannerWorkspace({
                 </ReviewBlock>
               </>
             ) : (
-              <EmptyState message="Generate a draft to review selected work, ownership, capacity, and risks." />
+              <EmptyState message="Generate a draft to review normalized Jira tickets, point estimates, ownership, and risks." />
             )}
           </SurfaceSection>
 
           <SurfaceSection
             eyebrow="Approval"
-            title="Finalize the sprint plan"
-            description="Approval is a deliberate human step before the Jira artifact can be created."
+            title="Finalize the Jira handoff"
+            description="Approval runs a final backend repair pass over the edited draft before the Epic and child issues are created."
           >
             <div className="flex flex-wrap gap-3">
               <ActionButton
@@ -620,7 +634,7 @@ export function PlannerWorkspace({
                 tone="primary"
               />
               <ActionButton
-                label={pendingAction === "handoff" ? "Creating Jira Epic..." : "Create Jira Plan Epic"}
+                label={pendingAction === "handoff" ? "Creating Jira Tickets..." : "Create Jira Epic + Tickets"}
                 onClick={handleJiraHandoff}
                 disabled={handoffDisabled}
                 tone="secondary"
@@ -634,10 +648,40 @@ export function PlannerWorkspace({
                   <>
                     {" "}
                     ·{" "}
-                    <a className="font-semibold underline decoration-emerald-100/50 underline-offset-4" href={handoffResult.url} target="_blank" rel="noreferrer">
-                      Open in Jira
+                    <a
+                      className="font-semibold underline decoration-emerald-100/50 underline-offset-4"
+                      href={handoffResult.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open epic in Jira
                     </a>
                   </>
+                ) : null}
+
+                {handoffResult.issues.length > 0 ? (
+                  <div className="mt-4 space-y-2">
+                    {handoffResult.issues.map((issue) => (
+                      <div key={issue.key} className="rounded-[1rem] border border-emerald-200/20 bg-emerald-500/10 px-4 py-3">
+                        <span className="font-semibold">{issue.key}</span> · {issue.summary} ·{" "}
+                        {issue.assignee ? issue.assignee : "Unassigned"}
+                        {issue.url ? (
+                          <>
+                            {" "}
+                            ·{" "}
+                            <a
+                              className="font-semibold underline decoration-emerald-100/50 underline-offset-4"
+                              href={issue.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open
+                            </a>
+                          </>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -740,6 +784,23 @@ function RiskBadge({ severity }: { severity: "low" | "medium" | "high" }) {
   );
 }
 
+function AssignmentBadge({ status }: { status: PlanItem["assignment_status"] }) {
+  const className =
+    status === "assigned"
+      ? "bg-emerald-400/15 text-emerald-100"
+      : status === "assigned_with_skill_gap"
+        ? "bg-amber-300/15 text-amber-50"
+        : status === "unassigned_skill_gap"
+          ? "bg-red-300/15 text-red-100"
+          : "bg-sky-300/15 text-sky-50";
+
+  return (
+    <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${className}`}>
+      {status.replaceAll("_", " ")}
+    </span>
+  );
+}
+
 function EmptyState({ message }: { message: string }) {
   return (
     <div className="rounded-[1.75rem] border border-dashed border-white/15 bg-white/5 px-5 py-10 text-center text-sm leading-7 text-slate-300/80">
@@ -756,9 +817,7 @@ function StatusBanner({ banner }: { banner: BannerState }) {
         ? "border-red-300/20 bg-red-400/10 text-red-50"
         : "border-sky-300/20 bg-sky-400/10 text-sky-50";
 
-  return (
-    <div className={`mb-6 rounded-[1.6rem] border px-5 py-4 text-sm font-medium ${classes}`}>{banner.message}</div>
-  );
+  return <div className={`mb-6 rounded-[1.6rem] border px-5 py-4 text-sm font-medium ${classes}`}>{banner.message}</div>;
 }
 
 function ActionButton({
@@ -784,13 +843,6 @@ function ActionButton({
   );
 }
 
-function splitCommaSeparated(value: string) {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
 function emptyToNull(value: string) {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
@@ -811,14 +863,34 @@ function formatValidationErrors(error: z.ZodError<SprintRequest>) {
   return error.issues.map((issue) => {
     const [group, index, field] = issue.path;
 
-    if (group === "backlog_items" && typeof index === "number") {
-      return `Backlog item ${index + 1} ${String(field).replaceAll("_", " ")}: ${issue.message}`;
-    }
-
-    if (group === "team_members" && typeof index === "number") {
-      return `Team member ${index + 1} ${String(field).replaceAll("_", " ")}: ${issue.message}`;
+    if (group === "tasks" && typeof index === "number") {
+      return `Task ${index + 1} ${String(field).replaceAll("_", " ")}: ${issue.message}`;
     }
 
     return issue.message;
   });
+}
+
+function previewAssignmentStatus(
+  item: PlanItem,
+  employee: EmployeeRecord | null
+): PlanItem["assignment_status"] {
+  if (!employee) {
+    return item.assignment_status.startsWith("unassigned") ? item.assignment_status : "unassigned_capacity";
+  }
+
+  const requiredSkills = new Set(item.required_skills.map((skill) => slugify(skill)));
+  const employeeSkills = new Set(employee.skills.map((skill) => slugify(skill)));
+  const hasSkillMatch =
+    requiredSkills.size === 0 ||
+    Array.from(requiredSkills).some((skill) => employeeSkills.has(skill));
+
+  if (!hasSkillMatch) {
+    return item.priority === "high" ? "assigned_with_skill_gap" : "unassigned_skill_gap";
+  }
+  return "assigned";
+}
+
+function slugify(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }

@@ -7,9 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from contour.jira_client import JiraError
-from contour.models import SprintPlan, SprintRequest
+from contour.models import EmployeeRecord, JiraHandoffResult, SprintPlan, SprintRequest
 from contour.orchestrator import approve_plan, create_plan_epic, plan_sprint
-from contour.sample_data import build_sample_request
+from contour.sample_data import build_employee_roster, build_sample_request
 
 
 def _allowed_origins() -> list[str]:
@@ -25,11 +25,6 @@ def _allowed_origins() -> list[str]:
 class JiraHandoffRequest(BaseModel):
     project_key: str = Field(min_length=1)
     approved_plan: SprintPlan
-
-
-class JiraHandoffResponse(BaseModel):
-    key: str
-    url: str | None = None
 
 
 def create_app() -> FastAPI:
@@ -50,6 +45,10 @@ def create_app() -> FastAPI:
     def get_sample_request() -> SprintRequest:
         return build_sample_request()
 
+    @app.get("/api/v1/employees", response_model=list[EmployeeRecord])
+    def get_employees() -> list[EmployeeRecord]:
+        return build_employee_roster()
+
     @app.post("/api/v1/plans/generate", response_model=SprintPlan)
     def generate_plan(request: SprintRequest) -> SprintPlan:
         return plan_sprint(request)
@@ -58,18 +57,14 @@ def create_app() -> FastAPI:
     def approve_draft(plan: SprintPlan) -> SprintPlan:
         return approve_plan(plan)
 
-    @app.post("/api/v1/jira/handoff", response_model=JiraHandoffResponse)
-    def jira_handoff(payload: JiraHandoffRequest) -> JiraHandoffResponse:
+    @app.post("/api/v1/jira/handoff", response_model=JiraHandoffResult)
+    def jira_handoff(payload: JiraHandoffRequest) -> JiraHandoffResult:
         try:
-            key = create_plan_epic(payload.project_key, payload.approved_plan)
+            return create_plan_epic(payload.project_key, payload.approved_plan)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except JiraError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-        base_url = os.getenv("JIRA_BASE_URL", "").rstrip("/")
-        url = f"{base_url}/browse/{key}" if base_url else None
-        return JiraHandoffResponse(key=key, url=url)
 
     return app
 

@@ -20,8 +20,17 @@ Contour is an AI-assisted sprint planning copilot for engineering teams. It acce
 
 ## Running locally
 
+Prefer installing from `pyproject.toml`:
+
 ```bash
 pip install -e .
+uvicorn contour.api.main:app --reload --app-dir src
+```
+
+If you need a plain requirements-based install instead, use:
+
+```bash
+pip install -r requirements.txt
 uvicorn contour.api.main:app --reload --app-dir src
 ```
 

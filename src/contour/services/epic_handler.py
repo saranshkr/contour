@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from contour.jira_client import JiraClient
@@ -10,10 +11,6 @@ class EpicCreationHandler:
     def __init__(self, jira_client: JiraClient, field_service: FieldMetadataService):
         self.jira_client = jira_client
         self.field_service = field_service
-
-    @staticmethod
-    def _canonical(name: str) -> str:
-        return name.lower().replace(" ", "")
 
     def map_fields(
         self,
@@ -40,17 +37,17 @@ class EpicCreationHandler:
                 mapped[field_id] = lookup["summary"]
                 continue
 
-            if meta["required"] and canonical_name not in {"project", "worktype", "reporter"}:
+            if meta["required"] and canonical_name not in {"project", "issuetype", "reporter"}:
                 raise ValueError(f"Required field '{human_name}' missing from Jira payload")
 
         if "summary" not in mapped:
-            summary = lookup.get("summary")
+            summary = draft_fields.get("summary") or lookup.get("summary")
             if not summary:
                 raise ValueError("'summary' missing from Jira payload")
             mapped["summary"] = summary
 
         if "description" not in mapped:
-            description = lookup.get("description")
+            description = draft_fields.get("description") or lookup.get("description")
             if not description:
                 raise ValueError("'description' missing from Jira payload")
             mapped["description"] = description
@@ -67,12 +64,24 @@ class EpicCreationHandler:
         return mapped
 
     def create_epic(self, project_key: str, epic_payload: dict[str, Any]) -> str:
+        return self.create_issue(project_key, "Epic", epic_payload)
+
+    def create_issue(
+        self,
+        project_key: str,
+        issue_type_name: str,
+        issue_payload: dict[str, Any],
+    ) -> str:
         data = {
             "fields": {
-                **epic_payload,
+                **issue_payload,
                 "project": {"key": project_key},
-                "issuetype": {"name": "Epic"},
+                "issuetype": {"name": issue_type_name},
             }
         }
         result = self.jira_client.post("/rest/api/2/issue", payload=data)
         return result.get("key")
+
+    @staticmethod
+    def _canonical(name: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", name.lower())

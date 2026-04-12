@@ -2,75 +2,69 @@ from __future__ import annotations
 
 import json
 
-from contour.models import SprintRequest
+from contour.models import EmployeeRecord, SprintRequest
 
 DEFAULT_SPRINT_NAME = "Sprint 18"
 DEFAULT_GOAL = "Ship a reliable Contour MVP planning and Jira handoff workflow."
 
-DEFAULT_BACKLOG_ITEMS = [
+DEFAULT_TASKS = [
     {
-        "id": "CTR-101",
-        "title": "Build Contour planning workspace",
-        "description": "Create a web experience for sprint goal, backlog items, and team roster entry.",
-        "priority": "High",
-        "dependencies": [],
+        "text": "Build the Contour planning workspace so PMs can enter a sprint goal and a freeform list of tasks, then review the generated Jira-ready draft before approval.",
         "owner_hint": "Avery",
-        "labels": ["frontend", "web-ui"],
     },
     {
-        "id": "CTR-102",
-        "title": "Generate sprint recommendations",
-        "description": "Use the planning pipeline to recommend selected work, owners, and rationales for the next sprint.",
-        "priority": "High",
-        "dependencies": ["CTR-101"],
+        "text": "Implement the backend planning pipeline that normalizes task descriptions, estimates story points, and recommends Jira ticket types and assignees based on team skills.",
         "owner_hint": "Jordan",
-        "labels": ["backend", "ai"],
     },
     {
-        "id": "CTR-103",
-        "title": "Create Jira handoff epic",
-        "description": "Convert an approved sprint plan into a single Jira epic with selected work, risks, and capacity summary.",
-        "priority": "Medium",
-        "dependencies": ["CTR-102"],
+        "text": "Create the Jira handoff flow that generates one epic plus child stories or tasks, writes story points when the field exists, and leaves overflow work unassigned.",
         "owner_hint": "Riley",
-        "labels": ["jira", "integration"],
     },
 ]
 
-DEFAULT_TEAM_MEMBERS = [
+DEFAULT_EMPLOYEES = [
     {
+        "id": "emp-avery",
         "name": "Avery",
         "role": "Frontend Engineer",
-        "skills": ["frontend", "react", "ui"],
+        "skills": ["frontend", "react", "ui", "next.js"],
         "capacity_points": 8,
+        "jira_account_id": "acct-avery",
     },
     {
+        "id": "emp-jordan",
         "name": "Jordan",
         "role": "Backend Engineer",
-        "skills": ["backend", "ai", "python"],
+        "skills": ["backend", "ai", "python", "api"],
         "capacity_points": 10,
+        "jira_account_id": "acct-jordan",
     },
     {
+        "id": "emp-riley",
         "name": "Riley",
         "role": "Platform Engineer",
-        "skills": ["jira", "integration", "python"],
+        "skills": ["jira", "integration", "python", "automation"],
         "capacity_points": 6,
+        "jira_account_id": "acct-riley",
     },
 ]
 
 
-def backlog_seed_json() -> str:
-    return json.dumps(DEFAULT_BACKLOG_ITEMS, indent=2)
+def task_seed_json() -> str:
+    return json.dumps(DEFAULT_TASKS, indent=2)
 
 
-def team_seed_json() -> str:
-    return json.dumps(DEFAULT_TEAM_MEMBERS, indent=2)
+def employee_seed_json() -> str:
+    return json.dumps(DEFAULT_EMPLOYEES, indent=2)
 
 
 def build_sample_request() -> SprintRequest:
     return SprintRequest(
         sprint_name=DEFAULT_SPRINT_NAME,
         goal=DEFAULT_GOAL,
-        backlog_items=DEFAULT_BACKLOG_ITEMS,
-        team_members=DEFAULT_TEAM_MEMBERS,
+        tasks=DEFAULT_TASKS,
     )
+
+
+def build_employee_roster() -> list[EmployeeRecord]:
+    return [EmployeeRecord.model_validate(employee) for employee in DEFAULT_EMPLOYEES]

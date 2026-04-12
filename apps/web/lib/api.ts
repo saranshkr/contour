@@ -1,5 +1,7 @@
 import {
+  EmployeeRecord,
   JiraHandoffResponse,
+  employeeRecordSchema,
   jiraHandoffResponseSchema,
   SprintPlan,
   sprintPlanSchema,
@@ -8,6 +10,7 @@ import {
 } from "@/lib/schemas";
 
 export interface PlannerApi {
+  loadEmployees: () => Promise<EmployeeRecord[]>;
   loadSampleRequest: () => Promise<SprintRequest>;
   generatePlan: (request: SprintRequest) => Promise<SprintPlan>;
   approvePlan: (plan: SprintPlan) => Promise<SprintPlan>;
@@ -49,6 +52,13 @@ async function requestJson<T>({
 }
 
 export const plannerApi: PlannerApi = {
+  loadEmployees() {
+    return requestJson({
+      path: "/api/v1/employees",
+      schema: employeeRecordSchema.array(),
+      init: { method: "GET" },
+    });
+  },
   loadSampleRequest() {
     return requestJson({
       path: "/api/v1/sample-request",
