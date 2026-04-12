@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { MarketingHomepage } from "@/components/marketing-homepage";
@@ -54,6 +55,33 @@ describe("MarketingHomepage", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /questions teams ask before trying it/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText("Free")).toBeInTheDocument();
+    expect(screen.getByText("$24 / seat")).toBeInTheDocument();
+    expect(screen.getByText("Custom")).toBeInTheDocument();
+  });
+
+  it("expands a faq answer when its question is clicked", async () => {
+    const user = userEvent.setup();
+
+    render(<MarketingHomepage />);
+    const questionButton = screen.getByRole("button", {
+      name: /does contour automatically push work into jira/i,
+    });
+
+    expect(questionButton).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("region", { name: /does contour automatically push work into jira/i })
+    ).not.toBeInTheDocument();
+
+    await user.click(questionButton);
+
+    expect(questionButton).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("region", { name: /does contour automatically push work into jira/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/jira handoff stays locked until the sprint plan is explicitly approved/i)
     ).toBeInTheDocument();
   });
 });

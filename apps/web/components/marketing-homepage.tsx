@@ -1,3 +1,4 @@
+import { FaqAccordion } from "@/components/faq-accordion";
 import { SectionHeading, SiteButton, SiteFooter, SiteHeader } from "@/components/site-chrome";
 
 const planningSignals = [
@@ -76,20 +77,20 @@ const pricingCards = [
   {
     name: "Starter",
     detail: "For small teams shaping their first approval-first planning workflow.",
-    price: "Placeholder",
-    highlight: "A clean way to trial structured intake, AI-assisted planning, and Jira handoff.",
+    price: "Free",
+    highlight: "Perfect for trying structured intake, AI-assisted planning, and approval-first Jira handoff with no upfront cost.",
   },
   {
     name: "Team",
     detail: "For growing product and engineering teams that want a calmer sprint planning ritual.",
-    price: "Placeholder",
-    highlight: "Adds room for a steadier planning cadence and shared review around the draft.",
+    price: "$24 / seat",
+    highlight: "Built for teams that want shared review, clearer ownership decisions, and a steadier planning cadence.",
   },
   {
     name: "Enterprise",
     detail: "For organizations that care deeply about approval boundaries and predictable handoff.",
-    price: "Placeholder",
-    highlight: "Positioned for deeper rollout planning once packaging and controls are finalized.",
+    price: "Custom",
+    highlight: "Designed for broader rollout planning, implementation support, and deeper process alignment.",
   },
 ];
 
@@ -112,13 +113,13 @@ const faqItems = [
   {
     question: "Is pricing finalized yet?",
     answer:
-      "Not yet. The current pricing section is intentionally a placeholder so the website feels complete without locking final commercial decisions.",
+      "Starter is free today. Team and Enterprise pricing shown here are the current packaging direction and can still evolve as the product matures.",
   },
 ];
 
 export function MarketingHomepage() {
   return (
-    <div className="relative isolate overflow-hidden">
+    <div className="relative isolate">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[44rem] bg-[radial-gradient(circle_at_top_left,rgba(119,186,248,0.22),transparent_30%),radial-gradient(circle_at_top_right,rgba(240,163,87,0.16),transparent_28%),radial-gradient(circle_at_center,rgba(109,211,199,0.08),transparent_45%)]" />
       <SiteHeader ctaHref="/demo" ctaLabel="Open Demo" />
 
@@ -233,7 +234,7 @@ export function MarketingHomepage() {
           <SectionHeading
             eyebrow="Pricing"
             title="Simple packaging while the product takes shape"
-            description="These tiers are placeholders for now. They are here to make the website feel complete without pretending pricing is already final."
+            description="Start with the free plan, then move into team or enterprise rollout as the workflow becomes part of your planning rhythm."
           />
           <div className="mt-8 grid gap-5 lg:grid-cols-3">
             {pricingCards.map((plan) => (
@@ -260,19 +261,7 @@ export function MarketingHomepage() {
             title="Questions teams ask before trying it"
             description="A few answers that make the product boundaries and current reality clear."
           />
-          <div className="mt-8 space-y-4">
-            {faqItems.map((item) => (
-              <details
-                key={item.question}
-                className="surface-panel rounded-[1.8rem] p-5 open:border-contour-tide/30"
-              >
-                <summary className="cursor-pointer list-none text-lg font-semibold text-white">
-                  {item.question}
-                </summary>
-                <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-300/80">{item.answer}</p>
-              </details>
-            ))}
-          </div>
+          <FaqAccordion items={faqItems} />
         </section>
 
         <section className="pb-8">

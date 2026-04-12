@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function DemoPage() {
   return (
-    <div className="relative isolate overflow-hidden">
+    <div className="relative isolate">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[22rem] bg-[radial-gradient(circle_at_top_left,rgba(119,186,248,0.18),transparent_28%),radial-gradient(circle_at_top_right,rgba(240,163,87,0.12),transparent_26%)]" />
       <SiteHeader ctaHref="/" ctaLabel="Back Home" ctaVariant="secondary" />
 
