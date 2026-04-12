@@ -287,125 +287,73 @@ export function PlannerWorkspace({
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl text-white">Backlog Items</h2>
-                <p className="mt-1 text-sm text-slate-300/75">Model each candidate item with priority, labels, dependencies, and owner hints.</p>
+                <p className="mt-1 text-sm text-slate-300/75">
+                  Add one natural-language task per card. Keep each task focused enough for Jira ticket generation.
+                </p>
               </div>
               <ActionButton
-                label={pendingAction === "sample" ? "Loading Sample..." : "Load Sample Data"}
-                onClick={handleLoadSample}
+                label="Add Task"
+                onClick={() => updateRequest({ tasks: [...request.tasks, createEmptyTask(request.tasks.length + 1)] })}
                 disabled={pendingAction !== null}
                 tone="secondary"
               />
-              <ActionButton
-                label={pendingAction === "generate" ? "Generating..." : generateLabel}
-                onClick={handleGeneratePlan}
-                disabled={pendingAction !== null}
-                tone="primary"
-              />
             </div>
 
-            {validationErrors.length > 0 ? (
-              <div className="mt-5 rounded-3xl border border-red-300/20 bg-red-400/10 p-4">
-                <p className="text-sm font-semibold text-red-100">Request validation</p>
-                <ul className="mt-3 space-y-2 text-sm text-red-50/90">
-                  {validationErrors.map((error) => (
-                    <li key={error}>{error}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            <div className="mt-6 grid gap-5 lg:grid-cols-2">
-              <label className="block">
-                <span className={labelClassName}>Sprint Name</span>
-                <input
-                  aria-label="Sprint name"
-                  className={inputClassName}
-                  value={request.sprint_name}
-                  onChange={(event) => updateRequest({ sprint_name: event.target.value })}
-                  placeholder="Sprint 18"
-                />
-              </label>
-              <label className="block">
-                <span className={labelClassName}>Sprint Goal</span>
-                <textarea
-                  aria-label="Sprint goal"
-                  className={`${inputClassName} min-h-28`}
-                  value={request.goal}
-                  onChange={(event) => updateRequest({ goal: event.target.value })}
-                  placeholder="Ship a reliable planning and Jira handoff flow."
-                />
-              </label>
-            </div>
-
-            <div className="mt-8">
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl text-white">Task List</h2>
-                  <p className="mt-1 text-sm text-slate-300/75">
-                    Add one natural-language task per card. Keep each task focused enough for Jira ticket generation.
-                  </p>
-                </div>
-                <ActionButton
-                  label="Add Task"
-                  onClick={() => updateRequest({ tasks: [...request.tasks, createEmptyTask(request.tasks.length + 1)] })}
-                  disabled={pendingAction !== null}
-                  tone="secondary"
-                />
-              </div>
-
-              <div className="space-y-4">
-                {request.tasks.map((task, index) => (
-                  <div key={`task-${index}`} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
-                    <div className="mb-4 flex items-center justify-between gap-4">
-                      <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-300/70">
-                        Task {index + 1}
-                      </p>
-                      {request.tasks.length > 1 ? (
-                        <button
-                          className="text-sm font-semibold text-red-200 transition hover:text-red-100"
-                          onClick={() =>
-                            updateRequest({
-                              tasks: request.tasks.filter((_, taskIndex) => taskIndex !== index),
-                            })
-                          }
-                          type="button"
-                        >
-                          Remove
-                        </button>
-                      ) : null}
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-[1.4fr_0.6fr]">
-                      <Field label="Task Description">
-                        <textarea
-                          aria-label={`Task ${index + 1} description`}
-                          className={`${inputClassName} min-h-32`}
-                          value={task.text}
-                          onChange={(event) => updateTask(index, { text: event.target.value })}
-                          placeholder="Describe the work in natural language."
-                        />
-                      </Field>
-                      <Field label="Owner Hint">
-                        <input
-                          aria-label={`Task ${index + 1} owner hint`}
-                          className={inputClassName}
-                          value={task.owner_hint ?? ""}
-                          onChange={(event) => updateTask(index, { owner_hint: emptyToNull(event.target.value) })}
-                          placeholder="Optional teammate name"
-                        />
-                      </Field>
-                    </div>
+            <div className="space-y-4">
+              {request.tasks.map((task, index) => (
+                <div key={`task-${index}`} className="rounded-[1.75rem] border border-white/10 bg-white/5 p-5">
+                  <div className="mb-4 flex items-center justify-between gap-4">
+                    <p className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-300/70">
+                      Task {index + 1}
+                    </p>
+                    {request.tasks.length > 1 ? (
+                      <button
+                        className="text-sm font-semibold text-red-200 transition hover:text-red-100"
+                        onClick={() =>
+                          updateRequest({
+                            tasks: request.tasks.filter((_, taskIndex) => taskIndex !== index),
+                          })
+                        }
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    ) : null}
                   </div>
-                ))}
-              </div>
-            </div>
-          </SectionPanel>
 
-          <SectionPanel
-            eyebrow="Roster"
-            title="Built-in employee roster"
-            description="Contour considers the full employee roster for every planning run and uses the Jira account IDs attached to each employee for assignment."
-          >
+                  <div className="grid gap-4 md:grid-cols-[1.4fr_0.6fr]">
+                    <Field label="Task Description">
+                      <textarea
+                        aria-label={`Task ${index + 1} description`}
+                        className={`${inputClassName} min-h-32`}
+                        value={task.text}
+                        onChange={(event) => updateTask(index, { text: event.target.value })}
+                        placeholder="Describe the work in natural language."
+                      />
+                    </Field>
+                    <Field label="Owner Hint">
+                      <input
+                        aria-label={`Task ${index + 1} owner hint`}
+                        className={inputClassName}
+                        value={task.owner_hint ?? ""}
+                        onChange={(event) => updateTask(index, { owner_hint: emptyToNull(event.target.value) })}
+                        placeholder="Optional teammate name"
+                      />
+                    </Field>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-8">
+            <div className="mb-4">
+              <h2 className="text-2xl text-white">Built-in employee roster</h2>
+              <p className="mt-1 text-sm text-slate-300/75">
+                Contour considers the full employee roster for every planning run and uses the Jira account IDs attached to each employee for assignment.
+              </p>
+            </div>
+
             {employees.length > 0 ? (
               <div className="grid gap-4 lg:grid-cols-2">
                 {employees.map((employee) => (
@@ -423,9 +371,11 @@ export function PlannerWorkspace({
                       ))}
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState message="Loading the employee roster for assignment guidance." />
+            )}
           </div>
         </SurfaceSection>
 
