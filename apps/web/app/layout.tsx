@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Contour",
-  description: "Sprint planning copilot workspace for scope, assignment, risk review, and Jira handoff.",
+  description: "AI sprint planning copilot for explainable scope decisions, approval-ready reviews, and Jira handoff.",
 };
 
 export default function RootLayout({
@@ -15,7 +15,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

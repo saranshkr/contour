@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import { plannerApi, PlannerApi } from "@/lib/api";
+import { SurfaceSection } from "@/components/surface-section";
 import {
   createEmptySprintRequest,
   createEmptyTask,
@@ -227,14 +228,67 @@ export function PlannerWorkspace({
 
       {banner ? <StatusBanner banner={banner} /> : null}
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-        <div className="grid gap-6">
-          <SectionPanel
-            eyebrow="Intake"
-            title="Shape the sprint request"
-            description="Enter the sprint goal and freeform tasks. Contour will use the built-in employee roster as planning context."
-          >
-            <div className="flex flex-wrap gap-3">
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <SurfaceSection
+          eyebrow="Intake"
+          title="Shape the sprint request"
+          description="Use structured backlog and team forms instead of raw JSON, then load sample data or generate the draft."
+        >
+          <div className="flex flex-wrap gap-3">
+            <ActionButton
+              label={pendingAction === "sample" ? "Loading Sample..." : "Load Sample Data"}
+              onClick={handleLoadSample}
+              disabled={pendingAction !== null}
+              tone="secondary"
+            />
+            <ActionButton
+              label={pendingAction === "generate" ? "Generating..." : generateLabel}
+              onClick={handleGeneratePlan}
+              disabled={pendingAction !== null}
+              tone="primary"
+            />
+          </div>
+
+          {validationErrors.length > 0 ? (
+            <div className="mt-5 rounded-3xl border border-red-300/20 bg-red-400/10 p-4">
+              <p className="text-sm font-semibold text-red-100">Request validation</p>
+              <ul className="mt-3 space-y-2 text-sm text-red-50/90">
+                {validationErrors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          <div className="mt-6 grid gap-5 lg:grid-cols-2">
+            <label className="block">
+              <span className={labelClassName}>Sprint Name</span>
+              <input
+                aria-label="Sprint name"
+                className={inputClassName}
+                value={request.sprint_name}
+                onChange={(event) => updateRequest({ sprint_name: event.target.value })}
+                placeholder="Sprint 18"
+              />
+            </label>
+            <label className="block">
+              <span className={labelClassName}>Sprint Goal</span>
+              <textarea
+                aria-label="Sprint goal"
+                className={`${inputClassName} min-h-28`}
+                value={request.goal}
+                onChange={(event) => updateRequest({ goal: event.target.value })}
+                placeholder="Ship a reliable planning and Jira handoff flow."
+              />
+            </label>
+          </div>
+
+          <div className="mt-8">
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl text-white">Backlog Items</h2>
+                <p className="mt-1 text-sm text-slate-300/75">Model each candidate item with priority, labels, dependencies, and owner hints.</p>
+              </div>
               <ActionButton
                 label={pendingAction === "sample" ? "Loading Sample..." : "Load Sample Data"}
                 onClick={handleLoadSample}
@@ -369,16 +423,14 @@ export function PlannerWorkspace({
                       ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState message="Loading employee roster..." />
-            )}
-          </SectionPanel>
-        </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </SurfaceSection>
 
         <div className="grid gap-6">
-          <SectionPanel
+          <SurfaceSection
             eyebrow="Draft Review"
             title="Inspect and edit the recommendation"
             description="Contour keeps issue type, points, assignee, and rationale editable before approval so the final Jira handoff stays intentional."
@@ -617,9 +669,9 @@ export function PlannerWorkspace({
             ) : (
               <EmptyState message="Generate a draft to review normalized Jira tickets, point estimates, ownership, and risks." />
             )}
-          </SectionPanel>
+          </SurfaceSection>
 
-          <SectionPanel
+          <SurfaceSection
             eyebrow="Approval"
             title="Finalize the Jira handoff"
             description="Approval runs a final backend repair pass over the edited draft before the Epic and child issues are created."
@@ -683,31 +735,10 @@ export function PlannerWorkspace({
                 ) : null}
               </div>
             ) : null}
-          </SectionPanel>
+          </SurfaceSection>
         </div>
       </div>
     </main>
-  );
-}
-
-function SectionPanel({
-  eyebrow,
-  title,
-  description,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="surface-panel rounded-[2rem] p-6 sm:p-7">
-      <p className="text-xs font-semibold uppercase tracking-[0.38em] text-contour-tide/90">{eyebrow}</p>
-      <h2 className="mt-3 text-3xl text-white">{title}</h2>
-      <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300/80">{description}</p>
-      <div className="mt-6">{children}</div>
-    </section>
   );
 }
 
