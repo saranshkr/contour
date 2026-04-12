@@ -20,6 +20,7 @@
 
 html {
   min-height: 100%;
+  scroll-behavior: smooth;
   background:
     radial-gradient(circle at top left, rgba(119, 186, 248, 0.24), transparent 30%),
     radial-gradient(circle at top right, rgba(240, 163, 87, 0.18), transparent 28%),
@@ -28,6 +29,7 @@ html {
 
 body {
   min-height: 100vh;
+  overflow-x: hidden;
   color: var(--text-primary);
   font-family: var(--font-body);
   background:
@@ -57,6 +59,10 @@ body {
   textarea,
   select {
     font: inherit;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
   }
 }
 

@@ -1,5 +1,5 @@
-import { PlannerWorkspace } from "@/components/planner-workspace";
+import { MarketingHomepage } from "@/components/marketing-homepage";
 
 export default function HomePage() {
-  return <PlannerWorkspace />;
+  return <MarketingHomepage />;
 }

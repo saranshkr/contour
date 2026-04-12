@@ -5,6 +5,7 @@ import { useState } from "react";
 import { z } from "zod";
 
 import { plannerApi, PlannerApi } from "@/lib/api";
+import { SurfaceSection } from "@/components/surface-section";
 import {
   BacklogItem,
   createEmptyBacklogItem,
@@ -187,7 +188,7 @@ export function PlannerWorkspace({
       {banner ? <StatusBanner banner={banner} /> : null}
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <SectionPanel
+        <SurfaceSection
           eyebrow="Intake"
           title="Shape the sprint request"
           description="Use structured backlog and team forms instead of raw JSON, then load sample data or generate the draft."
@@ -449,10 +450,10 @@ export function PlannerWorkspace({
               ))}
             </div>
           </div>
-        </SectionPanel>
+        </SurfaceSection>
 
         <div className="grid gap-6">
-          <SectionPanel
+          <SurfaceSection
             eyebrow="Draft Review"
             title="Inspect the recommendation"
             description="Contour keeps the reasoning visible so sprint decisions stay explainable."
@@ -604,9 +605,9 @@ export function PlannerWorkspace({
             ) : (
               <EmptyState message="Generate a draft to review selected work, ownership, capacity, and risks." />
             )}
-          </SectionPanel>
+          </SurfaceSection>
 
-          <SectionPanel
+          <SurfaceSection
             eyebrow="Approval"
             title="Finalize the sprint plan"
             description="Approval is a deliberate human step before the Jira artifact can be created."
@@ -640,31 +641,10 @@ export function PlannerWorkspace({
                 ) : null}
               </div>
             ) : null}
-          </SectionPanel>
+          </SurfaceSection>
         </div>
       </div>
     </main>
-  );
-}
-
-function SectionPanel({
-  eyebrow,
-  title,
-  description,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="surface-panel rounded-[2rem] p-6 sm:p-7">
-      <p className="text-xs font-semibold uppercase tracking-[0.38em] text-contour-tide/90">{eyebrow}</p>
-      <h2 className="mt-3 text-3xl text-white">{title}</h2>
-      <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300/80">{description}</p>
-      <div className="mt-6">{children}</div>
-    </section>
   );
 }
 
