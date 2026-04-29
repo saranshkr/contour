@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 STORY_POINT_BUCKETS = (1, 2, 3, 5, 8)
+VALID_TASK_TYPES = ("Story", "Task")
+VALID_PRIORITY_LEVELS = ("low", "medium", "high")
+VALID_WORK_ITEM_STATUS_VALUES = ("todo", "in_progress", "blocked", "done")
 
 PriorityLevel = Literal["low", "medium", "high"]
 IssueTypeName = Literal["Story", "Task"]
+WorkItemStatus = Literal["todo", "in_progress", "blocked", "done"]
 AssignmentStatus = Literal[
     "assigned",
     "unassigned_capacity",
@@ -36,25 +41,67 @@ def _clean_text_list(values: list[str]) -> list[str]:
     return cleaned
 
 
-class TaskInput(BaseModel):
-    text: str
+def _find_case_insensitive_duplicates(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    duplicate_keys: set[str] = set()
+    for value in values:
+        normalized = value.lower()
+        if normalized in seen and normalized not in duplicate_keys:
+            duplicates.append(value)
+            duplicate_keys.add(normalized)
+        seen.add(normalized)
+    return duplicates
+
+
+class BacklogItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str | None = None
+    text: str | None = None
+    title: str | None = None
+    description: str | None = None
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    task_type: IssueTypeName | None = None
+    priority: PriorityLevel | None = None
+    status: WorkItemStatus | None = None
     owner_hint: str | None = None
 
-    @field_validator("text")
+    @field_validator("id", "text", "title", "description", "owner_hint")
     @classmethod
-    def validate_text(cls, value: str) -> str:
-        return _require_text(value)
-
-    @field_validator("owner_hint")
-    @classmethod
-    def normalize_owner_hint(cls, value: str | None) -> str | None:
+    def normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         cleaned = value.strip()
         return cleaned or None
 
+    @field_validator("acceptance_criteria", mode="before")
+    @classmethod
+    def default_acceptance_criteria(cls, value: object) -> object:
+        return value or []
 
-class EmployeeRecord(BaseModel):
+    @field_validator("acceptance_criteria")
+    @classmethod
+    def validate_acceptance_criteria(cls, value: list[str]) -> list[str]:
+        return _clean_text_list(value)
+
+    @model_validator(mode="after")
+    def validate_content(self) -> BacklogItem:
+        if not self.text and not (self.title and self.description):
+            raise ValueError("backlog item must include text or both title and description")
+        return self
+
+
+class TaskInput(BacklogItem):
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _require_text(value)
+
+
+class EngineerProfile(BaseModel):
     id: str
     name: str
     role: str
@@ -76,25 +123,70 @@ class EmployeeRecord(BaseModel):
         return cleaned
 
 
-class SprintRequest(BaseModel):
-    sprint_name: str
-    goal: str
-    tasks: list[TaskInput] = Field(min_length=1)
+class EmployeeRecord(EngineerProfile):
+    pass
 
-    @field_validator("sprint_name", "goal")
+
+class TeamCapacity(BaseModel):
+    available_points: int | None = Field(default=None, ge=0)
+    buffer_points: int = Field(default=0, ge=0)
+
+
+class ExpectedConstraints(BaseModel):
+    should_fit_capacity: bool | None = None
+    allow_missing_acceptance_criteria: bool = False
+    allow_skill_gaps: bool = False
+    allow_malformed_input: bool = False
+
+
+class SprintPlanInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    sprint_name: str
+    sprint_goal: str = Field(alias="goal")
+    backlog_items: list[BacklogItem] = Field(min_length=1, alias="tasks")
+    engineer_profiles: list[EngineerProfile] = Field(default_factory=list)
+    team_capacity: TeamCapacity | None = None
+    expected_constraints: ExpectedConstraints | None = None
+
+    @field_validator("sprint_name", "sprint_goal")
     @classmethod
     def validate_required_text(cls, value: str) -> str:
         return _require_text(value)
 
+    @field_validator("backlog_items", mode="before")
+    @classmethod
+    def default_backlog_items(cls, value: object) -> object:
+        return value or []
+
     @model_validator(mode="after")
-    def validate_request_integrity(self) -> SprintRequest:
-        task_texts = [task.text for task in self.tasks]
+    def validate_request_integrity(self) -> SprintPlanInput:
+        task_texts = [item.text for item in self.backlog_items if item.text]
         duplicate_tasks = _find_case_insensitive_duplicates(task_texts)
         if duplicate_tasks:
             raise ValueError(
                 f"tasks must be unique; duplicates: {', '.join(duplicate_tasks)}"
             )
+
+        item_ids = [item.id for item in self.backlog_items if item.id]
+        duplicate_ids = _find_case_insensitive_duplicates(item_ids)
+        if duplicate_ids:
+            raise ValueError(
+                f"backlog item ids must be unique; duplicates: {', '.join(duplicate_ids)}"
+            )
         return self
+
+    @property
+    def goal(self) -> str:
+        return self.sprint_goal
+
+    @property
+    def tasks(self) -> list[BacklogItem]:
+        return self.backlog_items
+
+
+class SprintRequest(SprintPlanInput):
+    pass
 
 
 class NormalizedTask(BaseModel):
@@ -102,26 +194,45 @@ class NormalizedTask(BaseModel):
     source_index: int = Field(ge=0)
     task_text: str
     owner_hint: str | None = None
+    backlog_item_id: str | None = None
     title: str
     description: str
+    acceptance_criteria: list[str] = Field(default_factory=list)
     priority: PriorityLevel
     jira_issue_type: IssueTypeName
+    status: WorkItemStatus = "todo"
     story_points: int = Field(ge=1)
     required_skills: list[str] = Field(default_factory=list)
     estimation_rationale: str
 
-    @field_validator("task_id", "task_text", "title", "description", "estimation_rationale")
+    @field_validator(
+        "task_id",
+        "task_text",
+        "title",
+        "description",
+        "estimation_rationale",
+    )
     @classmethod
     def validate_required_text(cls, value: str) -> str:
         return _require_text(value)
 
-    @field_validator("owner_hint")
+    @field_validator("owner_hint", "backlog_item_id")
     @classmethod
-    def normalize_owner_hint(cls, value: str | None) -> str | None:
+    def normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("acceptance_criteria", mode="before")
+    @classmethod
+    def default_acceptance_criteria(cls, value: object) -> object:
+        return value or []
+
+    @field_validator("acceptance_criteria")
+    @classmethod
+    def validate_acceptance_criteria(cls, value: list[str]) -> list[str]:
+        return _clean_text_list(value)
 
     @field_validator("required_skills", mode="before")
     @classmethod
@@ -164,6 +275,42 @@ class RiskFlag(BaseModel):
     @classmethod
     def validate_affected_items(cls, value: list[str]) -> list[str]:
         return _clean_text_list(value)
+
+
+class ValidationMessage(BaseModel):
+    code: str
+    message: str
+    field: str | None = None
+    task_id: str | None = None
+
+    @field_validator("code", "message")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        return _require_text(value)
+
+    @field_validator("field", "task_id")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class ValidationMetrics(BaseModel):
+    total_points: int = Field(ge=0)
+    available_capacity: int = Field(ge=0)
+    capacity_utilization: float = Field(ge=0)
+    overloaded_engineers: list[str] = Field(default_factory=list)
+    assigned_item_count: int = Field(default=0, ge=0)
+    unassigned_item_count: int = Field(default=0, ge=0)
+
+
+class SprintPlanValidationResult(BaseModel):
+    is_valid: bool
+    errors: list[ValidationMessage] = Field(default_factory=list)
+    warnings: list[ValidationMessage] = Field(default_factory=list)
+    metrics: ValidationMetrics
 
 
 class PlanItem(NormalizedTask):
@@ -267,7 +414,10 @@ class SprintPlan(BaseModel):
     plan_items: list[PlanItem] = Field(default_factory=list)
     capacity_summary: CapacitySummary
     risks: list[RiskFlag] = Field(default_factory=list)
+    validation_result: SprintPlanValidationResult | None = None
     approval_state: Literal["draft", "approved"] = "draft"
+    engineer_profiles: list[EngineerProfile] = Field(default_factory=list)
+    team_capacity: TeamCapacity | None = None
 
     @field_validator("sprint_name", "goal")
     @classmethod
@@ -290,6 +440,12 @@ class SprintPlan(BaseModel):
         return self
 
 
+class JiraIssuePreview(BaseModel):
+    issue_type: str
+    fields: dict[str, object]
+    task_id: str | None = None
+
+
 class JiraIssueResult(BaseModel):
     key: str
     url: str | None = None
@@ -297,6 +453,7 @@ class JiraIssueResult(BaseModel):
     issue_type: IssueTypeName
     assignment_status: AssignmentStatus
     assignee: str | None = None
+    task_id: str | None = None
 
     @field_validator("key", "summary")
     @classmethod
@@ -304,25 +461,88 @@ class JiraIssueResult(BaseModel):
         return _require_text(value)
 
 
+class JiraSyncStatus(str, Enum):
+    NOT_STARTED = "NOT_STARTED"
+    DRY_RUN_PASSED = "DRY_RUN_PASSED"
+    SYNC_IN_PROGRESS = "SYNC_IN_PROGRESS"
+    SYNC_SUCCEEDED = "SYNC_SUCCEEDED"
+    SYNC_FAILED = "SYNC_FAILED"
+    PARTIAL_FAILURE = "PARTIAL_FAILURE"
+
+
+class JiraSyncState(BaseModel):
+    idempotency_key: str
+    project_key: str
+    status: JiraSyncStatus
+    epic_key: str | None = None
+    child_issue_keys: dict[str, str] = Field(default_factory=dict)
+    validation_errors: list[ValidationMessage] = Field(default_factory=list)
+    validation_warnings: list[ValidationMessage] = Field(default_factory=list)
+    last_error: str | None = None
+
+    @field_validator("idempotency_key", "project_key")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        return _require_text(value)
+
+    @field_validator("epic_key", "last_error")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class JiraDryRunRequest(BaseModel):
+    project_key: str = Field(min_length=1)
+    plan: SprintPlan = Field(alias="approved_plan")
+    accept_warnings: bool = False
+    engineer_profiles: list[EngineerProfile] = Field(default_factory=list)
+    team_capacity: TeamCapacity | None = None
+
+    @field_validator("project_key")
+    @classmethod
+    def validate_project_key(cls, value: str) -> str:
+        return _require_text(value).upper()
+
+
+class SprintPlanActionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    plan: SprintPlan = Field(alias="approved_plan")
+    engineer_profiles: list[EngineerProfile] = Field(default_factory=list)
+    team_capacity: TeamCapacity | None = None
+
+
+class JiraHandoffRequest(SprintPlanActionRequest):
+    project_key: str = Field(min_length=1)
+    accept_warnings: bool = False
+
+    @field_validator("project_key")
+    @classmethod
+    def validate_project_key(cls, value: str) -> str:
+        return _require_text(value).upper()
+
+
+class JiraDryRunResponse(BaseModel):
+    idempotency_key: str
+    epic_payload_preview: JiraIssuePreview
+    child_issue_payload_previews: list[JiraIssuePreview] = Field(default_factory=list)
+    validation_errors: list[ValidationMessage] = Field(default_factory=list)
+    validation_warnings: list[ValidationMessage] = Field(default_factory=list)
+    estimated_jira_objects: int = Field(ge=0)
+    safe_to_execute: bool
+    sync_state: JiraSyncState
+
+
 class JiraHandoffResult(BaseModel):
     key: str
     url: str | None = None
     issues: list[JiraIssueResult] = Field(default_factory=list)
+    sync_state: JiraSyncState | None = None
 
     @field_validator("key")
     @classmethod
     def validate_required_text(cls, value: str) -> str:
         return _require_text(value)
-
-
-def _find_case_insensitive_duplicates(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    duplicates: list[str] = []
-    duplicate_keys: set[str] = set()
-    for value in values:
-        normalized = value.lower()
-        if normalized in seen and normalized not in duplicate_keys:
-            duplicates.append(value)
-            duplicate_keys.add(normalized)
-        seen.add(normalized)
-    return duplicates

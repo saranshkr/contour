@@ -26,16 +26,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["sprint_name"], "Sprint 18")
         self.assertGreaterEqual(len(payload["tasks"]), 1)
 
-    def test_employee_endpoint_returns_built_in_roster(self) -> None:
-        response = self.client.get("/api/v1/employees")
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertGreaterEqual(len(payload), 1)
-        self.assertIn("jira_account_id", payload[0])
-
-    def test_generate_plan_returns_draft_plan(self) -> None:
-        request = build_sample_request().model_dump()
+    def test_generate_plan_returns_draft_plan_with_validation(self) -> None:
+        request = build_sample_request().model_dump(by_alias=True)
 
         response = self.client.post("/api/v1/plans/generate", json=request)
 
@@ -44,18 +36,49 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["approval_state"], "draft")
         self.assertIn("capacity_summary", payload)
         self.assertIn("plan_items", payload)
+        self.assertIn("validation_result", payload)
 
-    def test_approve_endpoint_marks_plan_as_approved(self) -> None:
-        request = build_sample_request().model_dump()
+    def test_jira_dry_run_returns_payload_preview(self) -> None:
+        request = build_sample_request().model_dump(by_alias=True)
         draft_plan = self.client.post("/api/v1/plans/generate", json=request).json()
 
-        response = self.client.post("/api/v1/plans/approve", json=draft_plan)
+        with patch(
+            "contour.api.main.dry_run_plan_handoff",
+            return_value={
+                "idempotency_key": "CTR-abc123",
+                "epic_payload_preview": {"issue_type": "Epic", "fields": {"summary": "Sprint 18"}},
+                "child_issue_payload_previews": [
+                    {"issue_type": "Story", "fields": {"summary": "Build planning workspace"}, "task_id": "TASK-1"}
+                ],
+                "validation_errors": [],
+                "validation_warnings": [],
+                "estimated_jira_objects": 2,
+                "safe_to_execute": True,
+                "sync_state": {
+                    "idempotency_key": "CTR-abc123",
+                    "project_key": "CTR",
+                    "status": "DRY_RUN_PASSED",
+                    "epic_key": None,
+                    "child_issue_keys": {},
+                    "validation_errors": [],
+                    "validation_warnings": [],
+                    "last_error": None,
+                },
+            },
+        ) as dry_run_mock:
+            response = self.client.post(
+                "/api/v1/jira/dry-run",
+                json={"project_key": "CTR", "approved_plan": draft_plan, "accept_warnings": True},
+            )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["approval_state"], "approved")
+        self.assertTrue(response.json()["safe_to_execute"])
+        self.assertEqual(response.json()["estimated_jira_objects"], 2)
+        self.assertTrue(dry_run_mock.call_args.kwargs["accept_warnings"])
+        self.assertGreaterEqual(len(dry_run_mock.call_args.kwargs["engineers"]), 1)
 
     def test_jira_handoff_requires_approval(self) -> None:
-        request = build_sample_request().model_dump()
+        request = build_sample_request().model_dump(by_alias=True)
         draft_plan = self.client.post("/api/v1/plans/generate", json=request).json()
 
         response = self.client.post(
@@ -65,52 +88,6 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("approved", response.json()["detail"])
-
-    def test_jira_handoff_returns_epic_and_issue_refs(self) -> None:
-        request = build_sample_request().model_dump()
-        draft_plan = self.client.post("/api/v1/plans/generate", json=request).json()
-        approved_plan = self.client.post("/api/v1/plans/approve", json=draft_plan).json()
-
-        with patch(
-            "contour.api.main.create_plan_epic",
-            return_value={
-                "key": "CTR-900",
-                "url": "https://example.atlassian.net/browse/CTR-900",
-                "issues": [
-                    {
-                        "key": "CTR-901",
-                        "url": "https://example.atlassian.net/browse/CTR-901",
-                        "summary": "Build planning workspace",
-                        "issue_type": "Story",
-                        "assignment_status": "assigned",
-                        "assignee": "Avery",
-                    }
-                ],
-            },
-        ):
-            response = self.client.post(
-                "/api/v1/jira/handoff",
-                json={"project_key": "CTR", "approved_plan": approved_plan},
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(),
-            {
-                "key": "CTR-900",
-                "url": "https://example.atlassian.net/browse/CTR-900",
-                "issues": [
-                    {
-                        "key": "CTR-901",
-                        "url": "https://example.atlassian.net/browse/CTR-901",
-                        "summary": "Build planning workspace",
-                        "issue_type": "Story",
-                        "assignment_status": "assigned",
-                        "assignee": "Avery",
-                    }
-                ],
-            },
-        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 import {
   EmployeeRecord,
+  JiraDryRunResponse,
+  jiraDryRunResponseSchema,
   JiraHandoffResponse,
   employeeRecordSchema,
   jiraHandoffResponseSchema,
@@ -7,14 +9,27 @@ import {
   sprintPlanSchema,
   SprintRequest,
   sprintRequestSchema,
+  TeamCapacity,
+  EngineerProfile,
 } from "@/lib/schemas";
+
+type PlanningContext = {
+  engineer_profiles?: EngineerProfile[];
+  team_capacity?: TeamCapacity | null;
+};
+
+type JiraActionOptions = {
+  acceptWarnings?: boolean;
+  context?: PlanningContext;
+};
 
 export interface PlannerApi {
   loadEmployees: () => Promise<EmployeeRecord[]>;
   loadSampleRequest: () => Promise<SprintRequest>;
   generatePlan: (request: SprintRequest) => Promise<SprintPlan>;
-  approvePlan: (plan: SprintPlan) => Promise<SprintPlan>;
-  handoffPlan: (projectKey: string, approvedPlan: SprintPlan) => Promise<JiraHandoffResponse>;
+  approvePlan: (plan: SprintPlan, context?: PlanningContext) => Promise<SprintPlan>;
+  dryRunPlan: (projectKey: string, approvedPlan: SprintPlan, options?: JiraActionOptions) => Promise<JiraDryRunResponse>;
+  handoffPlan: (projectKey: string, approvedPlan: SprintPlan, options?: JiraActionOptions) => Promise<JiraHandoffResponse>;
 }
 
 const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";
@@ -77,18 +92,37 @@ export const plannerApi: PlannerApi = {
       },
     });
   },
-  approvePlan(plan) {
+  approvePlan(plan, context) {
     const validated = sprintPlanSchema.parse(plan);
     return requestJson({
       path: "/api/v1/plans/approve",
       schema: sprintPlanSchema,
       init: {
         method: "POST",
-        body: JSON.stringify(validated),
+        body: JSON.stringify({
+          approved_plan: validated,
+          ...buildContextPayload(validated, context),
+        }),
       },
     });
   },
-  handoffPlan(projectKey, approvedPlan) {
+  dryRunPlan(projectKey, approvedPlan, options) {
+    const validatedPlan = sprintPlanSchema.parse(approvedPlan);
+    return requestJson({
+      path: "/api/v1/jira/dry-run",
+      schema: jiraDryRunResponseSchema,
+      init: {
+        method: "POST",
+        body: JSON.stringify({
+          project_key: projectKey.trim(),
+          approved_plan: validatedPlan,
+          accept_warnings: options?.acceptWarnings ?? false,
+          ...buildContextPayload(validatedPlan, options?.context),
+        }),
+      },
+    });
+  },
+  handoffPlan(projectKey, approvedPlan, options) {
     const validatedPlan = sprintPlanSchema.parse(approvedPlan);
     return requestJson({
       path: "/api/v1/jira/handoff",
@@ -98,8 +132,22 @@ export const plannerApi: PlannerApi = {
         body: JSON.stringify({
           project_key: projectKey.trim(),
           approved_plan: validatedPlan,
+          accept_warnings: options?.acceptWarnings ?? false,
+          ...buildContextPayload(validatedPlan, options?.context),
         }),
       },
     });
   },
 };
+
+function buildContextPayload(plan: SprintPlan, context?: PlanningContext) {
+  return {
+    engineer_profiles: context?.engineer_profiles?.length
+      ? context.engineer_profiles
+      : plan.engineer_profiles,
+    team_capacity:
+      context && "team_capacity" in context
+        ? context.team_capacity
+        : plan.team_capacity ?? null,
+  };
+}

@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from contour.models import (
+    BacklogItem,
     EmployeeRecord,
     NormalizedTask,
     SprintRequest,
@@ -207,21 +208,34 @@ class LLMService:
     ) -> list[NormalizedTask]:
         all_skills = [skill for employee in employees for skill in employee.skills]
         return [
-            NormalizedTask(
-                task_id=f"TASK-{index + 1}",
-                source_index=index,
-                task_text=task.text,
-                owner_hint=task.owner_hint,
-                title=self._infer_title(task.text),
-                description=self._infer_description(task.text),
-                priority=self._infer_priority(task.text),
-                jira_issue_type=self._infer_issue_type(task.text),
-                story_points=self._estimate_story_points(task.text, all_skills),
-                required_skills=self._infer_required_skills(task.text, all_skills),
-                estimation_rationale=self._build_estimation_rationale(task.text),
-            )
+            self._normalize_task(index, task, all_skills)
             for index, task in enumerate(request.tasks)
         ]
+
+    def _normalize_task(
+        self,
+        index: int,
+        task: BacklogItem,
+        all_skills: list[str],
+    ) -> NormalizedTask:
+        task_text = task.text or " ".join(part for part in [task.title, task.description] if part)
+        if not task_text:
+            task_text = f"Backlog item {index + 1}"
+        return NormalizedTask(
+            task_id=f"TASK-{index + 1}",
+            source_index=index,
+            task_text=task_text,
+            owner_hint=task.owner_hint,
+            backlog_item_id=task.id,
+            title=task.title or self._infer_title(task_text),
+            description=task.description or self._infer_description(task_text),
+            acceptance_criteria=task.acceptance_criteria,
+            priority=self._infer_priority(task_text),
+            jira_issue_type=self._infer_issue_type(task_text),
+            story_points=self._estimate_story_points(task_text, all_skills),
+            required_skills=self._infer_required_skills(task_text, all_skills),
+            estimation_rationale=self._build_estimation_rationale(task_text),
+        )
 
     def _infer_title(self, task_text: str) -> str:
         clipped = task_text.strip().split(".")[0]

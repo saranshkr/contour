@@ -1,0 +1,276 @@
+[
+  {
+    "sprint_name": "Sprint Eval 01",
+    "sprint_goal": "Ship a dependable planning review workspace.",
+    "backlog_items": [
+      {
+        "id": "SCN-01-1",
+        "text": "Build the draft review drawer for the planning workspace.",
+        "acceptance_criteria": ["Drawer shows validation errors and warnings."]
+      },
+      {
+        "id": "SCN-01-2",
+        "text": "Add capacity usage metrics to the sprint summary panel.",
+        "acceptance_criteria": ["Summary shows assigned, unassigned, and utilization."]
+      }
+    ],
+    "engineer_profiles": [
+      {"id": "eng-1", "name": "Avery", "role": "Frontend", "skills": ["frontend", "react", "ui"], "capacity_points": 8, "jira_account_id": "acct-1"},
+      {"id": "eng-2", "name": "Jordan", "role": "Backend", "skills": ["backend", "python", "api"], "capacity_points": 8, "jira_account_id": "acct-2"}
+    ],
+    "team_capacity": {"available_points": 16, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 02",
+    "sprint_goal": "Handle an overloaded frontend sprint.",
+    "backlog_items": [
+      {"id": "SCN-02-1", "text": "Rebuild the entire approvals dashboard with inline editing and bulk triage.", "acceptance_criteria": ["Dashboard supports bulk review."]},
+      {"id": "SCN-02-2", "text": "Add a second analytics dashboard for stakeholder reporting.", "acceptance_criteria": ["Report can be exported."]},
+      {"id": "SCN-02-3", "text": "Refresh the marketing landing page and documentation shell.", "acceptance_criteria": ["Updated shell is responsive."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-3", "name": "Sam", "role": "Frontend", "skills": ["frontend", "react", "ui"], "capacity_points": 5, "jira_account_id": "acct-3"}
+    ],
+    "team_capacity": {"available_points": 5, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": false}
+  },
+  {
+    "sprint_name": "Sprint Eval 03",
+    "sprint_goal": "Work through missing task details.",
+    "backlog_items": [
+      {"id": "SCN-03-1", "text": "Fix the plan export issue"},
+      {"id": "SCN-03-2", "text": "Need better Jira thing"}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-4", "name": "Morgan", "role": "Generalist", "skills": ["frontend", "backend", "jira"], "capacity_points": 8, "jira_account_id": "acct-4"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 1},
+    "expected_constraints": {"allow_missing_acceptance_criteria": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 04",
+    "sprint_goal": "Resolve ambiguous backlog items.",
+    "backlog_items": [
+      {"id": "SCN-04-1", "text": "Improve onboarding", "acceptance_criteria": ["At least one onboarding path improves."]},
+      {"id": "SCN-04-2", "text": "Make infra safer", "acceptance_criteria": ["Safer path is documented."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-5", "name": "Taylor", "role": "Platform", "skills": ["devops", "automation", "backend"], "capacity_points": 8, "jira_account_id": "acct-5"},
+      {"id": "eng-6", "name": "Lee", "role": "Product Engineer", "skills": ["frontend", "backend", "ux"], "capacity_points": 8, "jira_account_id": "acct-6"}
+    ],
+    "team_capacity": {"available_points": 16, "buffer_points": 2},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 05",
+    "sprint_goal": "Blend frontend, backend, and ML work.",
+    "backlog_items": [
+      {"id": "SCN-05-1", "text": "Add retrieval-augmented sprint planning suggestions to the API.", "acceptance_criteria": ["Planner returns contextual suggestions."]},
+      {"id": "SCN-05-2", "text": "Create a React review panel for model confidence and risk flags.", "acceptance_criteria": ["Review panel surfaces risk flags."]},
+      {"id": "SCN-05-3", "text": "Tune embeddings refresh job and monitor vector sync latency.", "acceptance_criteria": ["Latency budget is tracked."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-7", "name": "Nina", "role": "ML Engineer", "skills": ["ml", "python", "llm"], "capacity_points": 8, "jira_account_id": "acct-7"},
+      {"id": "eng-8", "name": "Chris", "role": "Backend Engineer", "skills": ["backend", "api", "python"], "capacity_points": 8, "jira_account_id": "acct-8"},
+      {"id": "eng-9", "name": "Avery", "role": "Frontend Engineer", "skills": ["frontend", "react", "ui"], "capacity_points": 5, "jira_account_id": "acct-9"}
+    ],
+    "team_capacity": {"available_points": 21, "buffer_points": 1},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 06",
+    "sprint_goal": "Handle uneven capacity across engineers.",
+    "backlog_items": [
+      {"id": "SCN-06-1", "text": "Build Jira audit logging for every sync attempt.", "acceptance_criteria": ["Each sync stores an audit record."]},
+      {"id": "SCN-06-2", "text": "Add retry-safe idempotency keys to sprint plan approval.", "acceptance_criteria": ["Retries reuse the same sync state."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-10", "name": "Riley", "role": "Platform Engineer", "skills": ["jira", "automation", "python"], "capacity_points": 10, "jira_account_id": "acct-10"},
+      {"id": "eng-11", "name": "Pat", "role": "Frontend Engineer", "skills": ["frontend"], "capacity_points": 2, "jira_account_id": "acct-11"}
+    ],
+    "team_capacity": {"available_points": 12, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 07",
+    "sprint_goal": "Support a high-risk release sprint.",
+    "backlog_items": [
+      {"id": "SCN-07-1", "text": "Migrate production Jira handoff to the new issue metadata API before Monday.", "acceptance_criteria": ["Migration path is rollback-safe."]},
+      {"id": "SCN-07-2", "text": "Patch the sprint planner after a blocker outage caused duplicate issue creation.", "acceptance_criteria": ["Duplicate protection is covered by tests."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-12", "name": "Jordan", "role": "Platform", "skills": ["jira", "backend", "python"], "capacity_points": 6, "jira_account_id": "acct-12"},
+      {"id": "eng-13", "name": "Quinn", "role": "SRE", "skills": ["devops", "automation", "monitoring"], "capacity_points": 5, "jira_account_id": "acct-13"}
+    ],
+    "team_capacity": {"available_points": 11, "buffer_points": 1},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 08",
+    "sprint_goal": "Handle malformed user input gracefully.",
+    "backlog_items": [
+      {"id": "SCN-08-1", "text": "?????", "acceptance_criteria": []},
+      {"id": "SCN-08-2", "text": "owner maybe Sam maybe not", "acceptance_criteria": []}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-14", "name": "Sam", "role": "Generalist", "skills": ["frontend", "backend"], "capacity_points": 5, "jira_account_id": "acct-14"}
+    ],
+    "team_capacity": {"available_points": 5, "buffer_points": 0},
+    "expected_constraints": {"allow_malformed_input": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 09",
+    "sprint_goal": "Exercise Jira payload edge cases.",
+    "backlog_items": [
+      {"id": "SCN-09-1", "text": "Create child issue descriptions with multiline rollout notes and acceptance criteria.", "acceptance_criteria": ["Description stays Jira-safe."]},
+      {"id": "SCN-09-2", "text": "Create labels for frontend/backend/ml hybrid tasks.", "acceptance_criteria": ["Labels are deduplicated."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-15", "name": "Kai", "role": "Platform", "skills": ["jira", "backend", "python"], "capacity_points": 8, "jira_account_id": "acct-15"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 10",
+    "sprint_goal": "Catch duplicate backlog item IDs.",
+    "backlog_items": [
+      {"id": "SCN-10-1", "text": "Implement a retry-safe sync state table.", "acceptance_criteria": ["State persists across retries."]},
+      {"id": "SCN-10-1", "text": "Implement a retry-safe sync state table follow-up.", "acceptance_criteria": ["No duplicate records are created."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-16", "name": "Devon", "role": "Backend", "skills": ["backend", "python", "sql"], "capacity_points": 8, "jira_account_id": "acct-16"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 0},
+    "expected_constraints": {"allow_malformed_input": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 11",
+    "sprint_goal": "Stress unsupported skill coverage.",
+    "backlog_items": [
+      {"id": "SCN-11-1", "text": "Launch a native iOS planning assistant extension.", "acceptance_criteria": ["Extension can fetch sprint data."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-17", "name": "Alex", "role": "Web Engineer", "skills": ["frontend", "react"], "capacity_points": 6, "jira_account_id": "acct-17"}
+    ],
+    "team_capacity": {"available_points": 6, "buffer_points": 0},
+    "expected_constraints": {"allow_skill_gaps": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 12",
+    "sprint_goal": "Exercise backend-heavy integration work.",
+    "backlog_items": [
+      {"id": "SCN-12-1", "text": "Build a FastAPI endpoint for Jira dry-run previews.", "acceptance_criteria": ["Endpoint returns preview payloads."]},
+      {"id": "SCN-12-2", "text": "Add structured sync failure telemetry for partial Jira writes.", "acceptance_criteria": ["Partial failures emit telemetry."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-18", "name": "Jordan", "role": "Backend", "skills": ["backend", "python", "api", "jira"], "capacity_points": 8, "jira_account_id": "acct-18"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 13",
+    "sprint_goal": "Exercise frontend-heavy work with low remaining capacity.",
+    "backlog_items": [
+      {"id": "SCN-13-1", "text": "Polish all planner cards, filters, forms, and empty states for the beta demo.", "acceptance_criteria": ["UI is polished and responsive."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-19", "name": "Avery", "role": "Frontend", "skills": ["frontend", "react", "ui"], "capacity_points": 3, "jira_account_id": "acct-19"}
+    ],
+    "team_capacity": {"available_points": 3, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": false}
+  },
+  {
+    "sprint_name": "Sprint Eval 14",
+    "sprint_goal": "Check devops and monitoring skills.",
+    "backlog_items": [
+      {"id": "SCN-14-1", "text": "Add deployment health checks and sync-state alerts for Jira failures.", "acceptance_criteria": ["Alerts fire for sync failures."]},
+      {"id": "SCN-14-2", "text": "Provision a staging queue for delayed Jira retries.", "acceptance_criteria": ["Retry queue is provisioned in staging."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-20", "name": "Quinn", "role": "SRE", "skills": ["devops", "monitoring", "automation"], "capacity_points": 8, "jira_account_id": "acct-20"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 1},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 15",
+    "sprint_goal": "Handle backlog items with only structured fields.",
+    "backlog_items": [
+      {"id": "SCN-15-1", "title": "Add evaluator export job", "description": "Create a scheduled export for planner evaluation summaries.", "acceptance_criteria": ["Summary CSV is written to artifacts."]},
+      {"id": "SCN-15-2", "title": "Store validation metrics", "description": "Persist capacity and error metrics for each sprint run.", "acceptance_criteria": ["Metrics persist for later analysis."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-21", "name": "Devon", "role": "Backend", "skills": ["python", "backend", "sql"], "capacity_points": 8, "jira_account_id": "acct-21"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 16",
+    "sprint_goal": "Support warning-only plans.",
+    "backlog_items": [
+      {"id": "SCN-16-1", "text": "Add an optional stakeholder summary email for sprint approvals."}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-22", "name": "Robin", "role": "Full-stack", "skills": ["frontend", "backend", "automation"], "capacity_points": 3, "jira_account_id": "acct-22"}
+    ],
+    "team_capacity": {"available_points": 3, "buffer_points": 0},
+    "expected_constraints": {"allow_missing_acceptance_criteria": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 17",
+    "sprint_goal": "Stress multiple mixed-discipline items.",
+    "backlog_items": [
+      {"id": "SCN-17-1", "text": "Add risk classification prompts for sprint planning outputs.", "acceptance_criteria": ["Risk flags classify high, medium, and low severity."]},
+      {"id": "SCN-17-2", "text": "Add a React chart for capacity allocation trends.", "acceptance_criteria": ["Trend chart displays historical allocations."]},
+      {"id": "SCN-17-3", "text": "Add Terraform for staging Redis used by delayed sync retries.", "acceptance_criteria": ["Terraform plans cleanly."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-23", "name": "Robin", "role": "Full-stack", "skills": ["frontend", "backend", "automation"], "capacity_points": 5, "jira_account_id": "acct-23"},
+      {"id": "eng-24", "name": "Nina", "role": "ML", "skills": ["ml", "llm", "python"], "capacity_points": 5, "jira_account_id": "acct-24"},
+      {"id": "eng-25", "name": "Quinn", "role": "SRE", "skills": ["devops", "terraform", "monitoring"], "capacity_points": 3, "jira_account_id": "acct-25"}
+    ],
+    "team_capacity": {"available_points": 13, "buffer_points": 1},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 18",
+    "sprint_goal": "Test long-form backlog items and large descriptions.",
+    "backlog_items": [
+      {"id": "SCN-18-1", "text": "Create a production-aware Jira handoff workflow that performs a dry-run, validates field mappings, checks owner-skill alignment, persists retry-safe sync state, and returns a full preview of child issues before any create endpoint is called.", "acceptance_criteria": ["Dry-run covers epic and child issues before create."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-26", "name": "Jordan", "role": "Platform", "skills": ["jira", "backend", "python"], "capacity_points": 8, "jira_account_id": "acct-26"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 19",
+    "sprint_goal": "Exercise owner hints that do not match the roster.",
+    "backlog_items": [
+      {"id": "SCN-19-1", "text": "Build a summary modal for plan approval.", "owner_hint": "Casey", "acceptance_criteria": ["Summary modal opens before approval."]}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-27", "name": "Avery", "role": "Frontend", "skills": ["frontend", "react"], "capacity_points": 5, "jira_account_id": "acct-27"}
+    ],
+    "team_capacity": {"available_points": 5, "buffer_points": 0},
+    "expected_constraints": {"should_fit_capacity": true}
+  },
+  {
+    "sprint_name": "Sprint Eval 20",
+    "sprint_goal": "Exercise missing acceptance criteria and Jira edge labels together.",
+    "backlog_items": [
+      {"id": "SCN-20-1", "text": "Add issue labels for ai/backend/frontend dependencies during dry-run preview."},
+      {"id": "SCN-20-2", "text": "Let users retry a partial Jira sync without duplicating child issues."}
+    ],
+    "engineer_profiles": [
+      {"id": "eng-28", "name": "Robin", "role": "Full-stack", "skills": ["frontend", "backend", "jira"], "capacity_points": 8, "jira_account_id": "acct-28"}
+    ],
+    "team_capacity": {"available_points": 8, "buffer_points": 1},
+    "expected_constraints": {"allow_missing_acceptance_criteria": true}
+  }
+]
