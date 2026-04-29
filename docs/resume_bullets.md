@@ -1,0 +1,5 @@
+- Built a human-in-the-loop AI sprint planning copilot that converts ambiguous backlog input into structured sprint plans with owner recommendations, delivery risk flags, and editable Jira-ready work items.
+- Designed a reliable LLM-assisted workflow orchestration layer with typed Pydantic and Zod contracts, deterministic fallback planning logic, and backend/frontend schema alignment across planning, validation, and Jira sync flows.
+- Implemented structured constraint-validation guardrails for capacity overruns, owner-skill mismatches, malformed tasks, duplicate backlog IDs, and malformed Jira payloads, with actionable validation errors, warnings, and capacity metrics surfaced in the UI.
+- Added a safe Jira handoff system with dry-run payload previews, explicit warning acceptance, SQLite-backed sync state persistence, deterministic idempotency keys, and retry-safe duplicate prevention for Epic and child issue creation.
+- Created a planner reliability evaluation harness with 20 synthetic sprint scenarios plus Vitest, pytest, and Playwright coverage to measure planning validity, Jira dry-run safety, latency, and end-to-end workflow behavior.
