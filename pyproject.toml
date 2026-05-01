@@ -15,6 +15,7 @@ dependencies = [
   "tenacity>=8.1.0,<9.0.0",
   "langchain-openai>=0.1.0",
   "pydantic>=2.6",
+  "pytest>=8.0",
   "pyyaml>=6.0",
   "python-dotenv>=1.0",
   "uvicorn>=0.34,<1.0"

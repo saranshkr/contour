@@ -4,11 +4,19 @@ import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
 from contour.jira_client import JiraError
-from contour.models import EmployeeRecord, JiraHandoffResult, SprintPlan, SprintRequest
-from contour.orchestrator import approve_plan, create_plan_epic, plan_sprint
+from contour.models import (
+    EmployeeRecord,
+    JiraDryRunRequest,
+    JiraDryRunResponse,
+    JiraHandoffRequest,
+    JiraHandoffResult,
+    SprintPlan,
+    SprintPlanActionRequest,
+    SprintRequest,
+)
+from contour.orchestrator import approve_plan, create_plan_epic, dry_run_plan_handoff, plan_sprint
 from contour.sample_data import build_employee_roster, build_sample_request
 
 
@@ -20,11 +28,6 @@ def _allowed_origins() -> list[str]:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
-
-
-class JiraHandoffRequest(BaseModel):
-    project_key: str = Field(min_length=1)
-    approved_plan: SprintPlan
 
 
 def create_app() -> FastAPI:
@@ -54,13 +57,43 @@ def create_app() -> FastAPI:
         return plan_sprint(request)
 
     @app.post("/api/v1/plans/approve", response_model=SprintPlan)
-    def approve_draft(plan: SprintPlan) -> SprintPlan:
-        return approve_plan(plan)
+    def approve_draft(payload: SprintPlan | SprintPlanActionRequest) -> SprintPlan:
+        try:
+            if isinstance(payload, SprintPlan):
+                return approve_plan(payload)
+            return approve_plan(
+                payload.plan,
+                engineers=_resolve_payload_engineers(payload),
+                team_capacity=_resolve_payload_team_capacity(payload),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/jira/dry-run", response_model=JiraDryRunResponse)
+    def jira_dry_run(payload: JiraDryRunRequest) -> JiraDryRunResponse:
+        try:
+            return dry_run_plan_handoff(
+                payload.project_key,
+                payload.plan,
+                engineers=_resolve_payload_engineers(payload),
+                team_capacity=_resolve_payload_team_capacity(payload),
+                accept_warnings=payload.accept_warnings,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except JiraError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/api/v1/jira/handoff", response_model=JiraHandoffResult)
     def jira_handoff(payload: JiraHandoffRequest) -> JiraHandoffResult:
         try:
-            return create_plan_epic(payload.project_key, payload.approved_plan)
+            return create_plan_epic(
+                payload.project_key,
+                payload.plan,
+                engineers=_resolve_payload_engineers(payload),
+                team_capacity=_resolve_payload_team_capacity(payload),
+                accept_warnings=payload.accept_warnings,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except JiraError as exc:
@@ -70,3 +103,11 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+def _resolve_payload_engineers(payload: SprintPlanActionRequest | JiraDryRunRequest) -> list[EmployeeRecord]:
+    return payload.engineer_profiles or payload.plan.engineer_profiles
+
+
+def _resolve_payload_team_capacity(payload: SprintPlanActionRequest | JiraDryRunRequest):
+    return payload.team_capacity if payload.team_capacity is not None else payload.plan.team_capacity

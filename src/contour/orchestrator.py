@@ -1,26 +1,37 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
+import json
 import re
+import time
 
 from contour.jira_client import JiraClient
 from contour.models import (
     AssignmentStatus,
     CapacitySummary,
     EmployeeRecord,
+    EngineerProfile,
+    JiraDryRunResponse,
     JiraHandoffResult,
+    JiraIssuePreview,
     JiraIssueResult,
+    JiraSyncState,
+    JiraSyncStatus,
     MemberCapacitySummary,
     NormalizedTask,
     PlanItem,
     PriorityLevel,
     RiskFlag,
     SprintPlan,
-    SprintRequest,
+    SprintPlanInput,
+    TeamCapacity,
 )
 from contour.sample_data import build_employee_roster
+from contour.services.constraint_validator import validate_sprint_input, validate_sprint_plan
 from contour.services.epic_handler import EpicCreationHandler
 from contour.services.field_meta import FieldMetadataService
+from contour.services.jira_sync_store import JiraSyncStore
 from contour.services.llm import LLMService
 
 PRIORITY_RANK: dict[PriorityLevel, int] = {
@@ -33,25 +44,44 @@ ASSIGNED_STATUSES = {"assigned", "assigned_with_skill_gap"}
 UNASSIGNED_STATUSES = {"unassigned_capacity", "unassigned_skill_gap"}
 
 
-def plan_sprint(request: SprintRequest, llm_service: LLMService | None = None) -> SprintPlan:
-    employees = build_employee_roster()
+def plan_sprint(
+    request: SprintPlanInput,
+    llm_service: LLMService | None = None,
+) -> SprintPlan:
+    employees = _resolve_employees(request.engineer_profiles)
     llm = llm_service or LLMService()
+    input_validation = validate_sprint_input(request, employees)
     normalized_items = _repair_normalized_tasks(
         request=request,
         employees=employees,
         normalized_items=llm.normalize_tasks(request, employees),
     )
-    return _build_plan(
+    plan = _build_plan(
         sprint_name=request.sprint_name,
         goal=request.goal,
         normalized_items=normalized_items,
         employees=employees,
+        team_capacity=request.team_capacity,
+        engineer_profiles=request.engineer_profiles,
         approval_state="draft",
     )
+    validation = validate_sprint_plan(plan, employees, request.team_capacity)
+    if input_validation.errors or input_validation.warnings:
+        validation.errors = [*input_validation.errors, *validation.errors]
+        validation.warnings = [*input_validation.warnings, *validation.warnings]
+        validation.is_valid = not validation.errors
+    plan.validation_result = validation
+    return plan
 
 
-def approve_plan(plan: SprintPlan) -> SprintPlan:
-    employees = build_employee_roster()
+def approve_plan(
+    plan: SprintPlan,
+    engineers: list[EngineerProfile] | None = None,
+    team_capacity: TeamCapacity | None = None,
+) -> SprintPlan:
+    resolved_engineers = engineers if engineers is not None else plan.engineer_profiles
+    resolved_team_capacity = team_capacity if team_capacity is not None else plan.team_capacity
+    employees = _resolve_employees(resolved_engineers)
     normalized_items = [_normalized_from_plan_item(item) for item in plan.plan_items]
     plan_by_task_id = {item.task_id: item for item in plan.plan_items}
     repaired = _build_plan(
@@ -59,56 +89,213 @@ def approve_plan(plan: SprintPlan) -> SprintPlan:
         goal=plan.goal,
         normalized_items=normalized_items,
         employees=employees,
+        team_capacity=resolved_team_capacity,
+        engineer_profiles=resolved_engineers,
         manual_items=plan_by_task_id,
         approval_state="approved",
     )
+    repaired.validation_result = validate_sprint_plan(repaired, employees, resolved_team_capacity)
+    if not repaired.validation_result.is_valid:
+        raise ValueError("Sprint plan validation failed. Resolve errors before approval.")
     return repaired
+
+
+def dry_run_plan_handoff(
+    project_key: str,
+    plan: SprintPlan,
+    jira_client: JiraClient | None = None,
+    engineers: list[EngineerProfile] | None = None,
+    team_capacity: TeamCapacity | None = None,
+    sync_store: JiraSyncStore | None = None,
+    accept_warnings: bool = False,
+) -> JiraDryRunResponse:
+    jira = jira_client or JiraClient()
+    store = sync_store or JiraSyncStore()
+    resolved_engineers = engineers if engineers is not None else plan.engineer_profiles
+    resolved_team_capacity = team_capacity if team_capacity is not None else plan.team_capacity
+    employees = _resolve_employees(resolved_engineers)
+    idempotency_key = build_idempotency_key(project_key, plan)
+    sync_state = store.get(idempotency_key) or JiraSyncState(
+        idempotency_key=idempotency_key,
+        project_key=project_key,
+        status=JiraSyncStatus.NOT_STARTED,
+    )
+
+    field_service = FieldMetadataService(jira)
+    handler = EpicCreationHandler(jira, field_service)
+    epic_preview, child_previews = _build_jira_previews(project_key, plan, handler, field_service)
+    validation = validate_sprint_plan(
+        plan,
+        employees,
+        resolved_team_capacity,
+        jira_previews=[epic_preview, *child_previews],
+    )
+
+    warnings_accepted = accept_warnings or not validation.warnings
+    safe_to_execute = validation.is_valid and warnings_accepted
+    sync_state.status = JiraSyncStatus.DRY_RUN_PASSED if safe_to_execute else JiraSyncStatus.NOT_STARTED
+    sync_state.validation_errors = validation.errors
+    sync_state.validation_warnings = validation.warnings
+    if safe_to_execute:
+        sync_state.last_error = None
+    elif validation.is_valid and validation.warnings:
+        sync_state.last_error = "Dry run warnings must be explicitly accepted."
+    else:
+        sync_state.last_error = "Dry run validation failed."
+    store.save(sync_state)
+
+    return JiraDryRunResponse(
+        idempotency_key=idempotency_key,
+        epic_payload_preview=epic_preview,
+        child_issue_payload_previews=child_previews,
+        validation_errors=validation.errors,
+        validation_warnings=validation.warnings,
+        estimated_jira_objects=1 + len(child_previews),
+        safe_to_execute=safe_to_execute,
+        sync_state=sync_state,
+    )
 
 
 def create_plan_epic(
     project_key: str,
     approved_plan: SprintPlan,
     jira_client: JiraClient | None = None,
+    engineers: list[EngineerProfile] | None = None,
+    team_capacity: TeamCapacity | None = None,
+    sync_store: JiraSyncStore | None = None,
+    accept_warnings: bool = False,
 ) -> JiraHandoffResult:
     if approved_plan.approval_state != "approved":
         raise ValueError("Sprint plan must be approved before Jira handoff.")
 
     jira = jira_client or JiraClient()
+    store = sync_store or JiraSyncStore()
+    resolved_engineers = engineers if engineers is not None else approved_plan.engineer_profiles
+    resolved_team_capacity = team_capacity if team_capacity is not None else approved_plan.team_capacity
+    employees = _resolve_employees(resolved_engineers)
+    dry_run = dry_run_plan_handoff(
+        project_key=project_key,
+        plan=approved_plan,
+        jira_client=jira,
+        engineers=employees,
+        team_capacity=resolved_team_capacity,
+        sync_store=store,
+        accept_warnings=accept_warnings,
+    )
+    if not dry_run.safe_to_execute:
+        raise ValueError("Jira dry-run validation failed. Resolve errors before Jira handoff.")
+
+    sync_state = dry_run.sync_state
+    if sync_state.status == JiraSyncStatus.SYNC_SUCCEEDED and sync_state.epic_key:
+        return _result_from_sync_state(jira.base_url, approved_plan, sync_state)
+
     field_service = FieldMetadataService(jira)
     handler = EpicCreationHandler(jira, field_service)
+    sync_state.status = JiraSyncStatus.SYNC_IN_PROGRESS
+    store.save(sync_state)
 
+    try:
+        if not sync_state.epic_key:
+            epic_preview, child_previews = _build_jira_previews(project_key, approved_plan, handler, field_service)
+            epic_key = handler.create_epic(project_key, epic_preview.fields)
+            sync_state.epic_key = epic_key
+            store.save(sync_state)
+        else:
+            epic_key = sync_state.epic_key
+            _, child_previews = _build_jira_previews(project_key, approved_plan, handler, field_service, epic_key)
+
+        issues: list[JiraIssueResult] = []
+        for preview, item in zip(child_previews, approved_plan.plan_items):
+            existing_key = sync_state.child_issue_keys.get(item.task_id)
+            if existing_key is None:
+                created_key = handler.create_issue(project_key, item.jira_issue_type, preview.fields)
+                sync_state.child_issue_keys[item.task_id] = created_key
+                store.save(sync_state)
+                issue_key = created_key
+            else:
+                issue_key = existing_key
+            issues.append(
+                JiraIssueResult(
+                    key=issue_key,
+                    url=_issue_url(jira.base_url, issue_key),
+                    summary=item.title,
+                    issue_type=item.jira_issue_type,
+                    assignment_status=item.assignment_status,
+                    assignee=item.recommended_assignee,
+                    task_id=item.task_id,
+                )
+            )
+    except Exception as exc:
+        sync_state.status = (
+            JiraSyncStatus.PARTIAL_FAILURE if sync_state.epic_key or sync_state.child_issue_keys else JiraSyncStatus.SYNC_FAILED
+        )
+        sync_state.last_error = str(exc)
+        store.save(sync_state)
+        raise
+
+    sync_state.status = JiraSyncStatus.SYNC_SUCCEEDED
+    sync_state.last_error = None
+    store.save(sync_state)
+    return JiraHandoffResult(
+        key=epic_key,
+        url=_issue_url(jira.base_url, epic_key),
+        issues=issues,
+        sync_state=sync_state,
+    )
+
+
+def build_idempotency_key(project_key: str, plan: SprintPlan) -> str:
+    payload = json.dumps(
+        {
+            "project_key": project_key.upper(),
+            "plan": plan.model_dump(mode="json", exclude={"validation_result"}),
+        },
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return f"{project_key.upper()}-{digest[:20]}"
+
+
+def _resolve_employees(engineers: list[EngineerProfile] | None) -> list[EmployeeRecord]:
+    if engineers:
+        return [EmployeeRecord.model_validate(engineer.model_dump()) for engineer in engineers]
+    return build_employee_roster()
+
+
+def _build_jira_previews(
+    project_key: str,
+    plan: SprintPlan,
+    handler: EpicCreationHandler,
+    field_service: FieldMetadataService,
+    epic_key: str | None = None,
+) -> tuple[JiraIssuePreview, list[JiraIssuePreview]]:
     field_requirements = field_service.get_epic_fields(project_key)
     account_id = field_service.get_user_id()
-    draft_fields = _build_plan_epic_fields(approved_plan)
+    draft_fields = _build_plan_epic_fields(plan)
     mapped_fields = handler.map_fields(draft_fields, field_requirements, account_id)
-    epic_key = handler.create_epic(project_key, mapped_fields)
-    epic_url = _issue_url(jira.base_url, epic_key)
+    epic_preview = JiraIssuePreview(issue_type="Epic", fields=mapped_fields)
 
-    issues: list[JiraIssueResult] = []
-    for item in approved_plan.plan_items:
+    child_previews: list[JiraIssuePreview] = []
+    parent_epic_key = epic_key or "DRY-RUN-EPIC"
+    for item in plan.plan_items:
         issue_fields = field_service.get_issue_type_fields(project_key, item.jira_issue_type)
         child_draft = _build_child_issue_fields(
             item=item,
-            epic_key=epic_key,
+            epic_key=parent_epic_key,
             field_requirements=issue_fields,
             field_service=field_service,
         )
         mapped_child = handler.map_fields(child_draft, issue_fields, account_id)
         if item.assignment_status in ASSIGNED_STATUSES and item.recommended_assignee_account_id:
             mapped_child["assignee"] = {"id": item.recommended_assignee_account_id}
-        child_key = handler.create_issue(project_key, item.jira_issue_type, mapped_child)
-        issues.append(
-            JiraIssueResult(
-                key=child_key,
-                url=_issue_url(jira.base_url, child_key),
-                summary=item.title,
+        child_previews.append(
+            JiraIssuePreview(
                 issue_type=item.jira_issue_type,
-                assignment_status=item.assignment_status,
-                assignee=item.recommended_assignee,
+                fields=mapped_child,
+                task_id=item.task_id,
             )
         )
-
-    return JiraHandoffResult(key=epic_key, url=epic_url, issues=issues)
+    return epic_preview, child_previews
 
 
 def _build_plan(
@@ -116,6 +303,8 @@ def _build_plan(
     goal: str,
     normalized_items: list[NormalizedTask],
     employees: list[EmployeeRecord],
+    team_capacity: TeamCapacity | None = None,
+    engineer_profiles: list[EngineerProfile] | None = None,
     manual_items: dict[str, PlanItem] | None = None,
     approval_state: str = "draft",
 ) -> SprintPlan:
@@ -136,49 +325,57 @@ def _build_plan(
 
     capacity_summary = _build_capacity_summary(employees, assigned_points, built_items)
     risks = _collect_plan_risks(built_items, capacity_summary)
-    return SprintPlan(
+    plan = SprintPlan(
         sprint_name=sprint_name,
         goal=goal,
         plan_items=built_items,
         capacity_summary=capacity_summary,
         risks=risks,
         approval_state=approval_state,
+        engineer_profiles=engineer_profiles or employees,
+        team_capacity=team_capacity,
     )
+    plan.validation_result = validate_sprint_plan(plan, employees, team_capacity)
+    return plan
 
 
 def _repair_normalized_tasks(
-    request: SprintRequest,
+    request: SprintPlanInput,
     employees: list[EmployeeRecord],
     normalized_items: list[NormalizedTask],
 ) -> list[NormalizedTask]:
     employee_skills = [skill for employee in employees for skill in employee.skills]
     repaired: list[NormalizedTask] = []
-    for index, task in enumerate(request.tasks):
+    for index, task in enumerate(request.backlog_items):
         if index < len(normalized_items):
             item = normalized_items[index]
             raw = item.model_dump()
         else:
             raw = {}
 
-        required_skills = raw.get("required_skills") or _infer_required_skills(task.text, employee_skills)
+        task_text = task.text or " ".join(filter(None, [task.title, task.description]))
+        required_skills = raw.get("required_skills") or _infer_required_skills(task_text, employee_skills)
         story_points = raw.get("story_points")
         if story_points not in {1, 2, 3, 5, 8}:
-            story_points = _estimate_story_points(task.text, required_skills)
+            story_points = _estimate_story_points(task_text, required_skills)
 
         repaired.append(
             NormalizedTask(
                 task_id=f"TASK-{index + 1}",
                 source_index=index,
-                task_text=task.text,
+                task_text=task_text,
                 owner_hint=task.owner_hint,
-                title=raw.get("title") or _infer_title(task.text),
-                description=raw.get("description") or _infer_description(task.text),
-                priority=_normalize_priority(raw.get("priority")),
-                jira_issue_type=_normalize_issue_type(raw.get("jira_issue_type")),
+                backlog_item_id=task.id,
+                title=raw.get("title") or task.title or _infer_title(task_text),
+                description=raw.get("description") or task.description or _infer_description(task_text),
+                acceptance_criteria=raw.get("acceptance_criteria") or task.acceptance_criteria,
+                priority=_normalize_priority(raw.get("priority") or task.priority),
+                jira_issue_type=_normalize_issue_type(raw.get("jira_issue_type") or task.task_type),
+                status=raw.get("status") or task.status or "todo",
                 story_points=story_points,
                 required_skills=required_skills,
                 estimation_rationale=raw.get("estimation_rationale")
-                or _fallback_estimation_rationale(task.text),
+                or _fallback_estimation_rationale(task_text),
             )
         )
     return repaired
@@ -190,10 +387,13 @@ def _normalized_from_plan_item(item: PlanItem) -> NormalizedTask:
         source_index=item.source_index,
         task_text=item.task_text,
         owner_hint=item.owner_hint,
+        backlog_item_id=item.backlog_item_id,
         title=item.title,
         description=item.description,
+        acceptance_criteria=item.acceptance_criteria,
         priority=item.priority,
         jira_issue_type=item.jira_issue_type,
+        status=item.status,
         story_points=item.story_points,
         required_skills=item.required_skills,
         estimation_rationale=item.estimation_rationale,
@@ -541,9 +741,14 @@ def _build_child_issue_fields(
     field_service: FieldMetadataService,
 ) -> dict[str, object]:
     field_requirements = dict(field_requirements)
+    criteria_block = (
+        "\n\nAcceptance criteria:\n" + "\n".join(f"- {criterion}" for criterion in item.acceptance_criteria)
+        if item.acceptance_criteria
+        else ""
+    )
     draft: dict[str, object] = {
         "summary": item.title,
-        "description": item.description,
+        "description": f"{item.description}{criteria_block}",
         "priority": item.priority.capitalize(),
         "labels": _build_item_labels(item),
     }
@@ -618,32 +823,81 @@ def _assignment_rationale(
 
 
 def _default_selection_rationale(item: NormalizedTask) -> str:
-    return (
-        f"Included because it is part of the approved sprint scope, "
-        f"is {item.priority} priority, and is estimated at {item.story_points} story points."
-    )
+    return f"Selected from the draft because it supports the sprint goal and is scoped as a {item.jira_issue_type.lower()}."
 
 
 def _sorted_items(items: list[NormalizedTask]) -> list[NormalizedTask]:
     return sorted(
         items,
-        key=lambda item: (-PRIORITY_RANK[item.priority], item.source_index),
+        key=lambda item: (
+            PRIORITY_RANK[item.priority],
+            item.story_points,
+            -item.source_index,
+        ),
+        reverse=True,
     )
 
 
 def _skill_overlap(item: NormalizedTask, employee: EmployeeRecord) -> int:
-    required_skills = {_slugify(skill) for skill in item.required_skills}
-    employee_skills = {_slugify(skill) for skill in employee.skills}
-    if not required_skills:
-        return 0
-    return len(required_skills & employee_skills)
+    required = {_slugify(skill) for skill in item.required_skills}
+    available = {_slugify(skill) for skill in employee.skills}
+    return len(required & available)
+
+
+def _infer_required_skills(task_text: str, employee_skills: list[str]) -> list[str]:
+    task_tokens = {_slugify(token) for token in re.split(r"[^a-zA-Z0-9.+#]+", task_text) if token}
+    matches = []
+    for skill in employee_skills:
+        skill_key = _slugify(skill)
+        if skill_key in task_tokens:
+            matches.append(skill)
+    return sorted(set(matches))
+
+
+def _estimate_story_points(task_text: str, required_skills: list[str]) -> int:
+    word_count = len(task_text.split())
+    complexity = len(required_skills)
+    if word_count > 40 or complexity >= 3:
+        return 8
+    if word_count > 28 or complexity == 2:
+        return 5
+    if word_count > 16:
+        return 3
+    if word_count > 8:
+        return 2
+    return 1
+
+
+def _infer_title(task_text: str) -> str:
+    sentence = task_text.strip().rstrip(".")
+    if len(sentence) <= 72:
+        return sentence
+    return sentence[:69].rstrip() + "..."
+
+
+def _infer_description(task_text: str) -> str:
+    return task_text.strip()
+
+
+def _fallback_estimation_rationale(task_text: str) -> str:
+    return f"Estimated from task wording, scope, and likely implementation complexity: {task_text.strip()}"
+
+
+def _normalize_priority(value: str | None) -> PriorityLevel:
+    normalized = (value or "medium").strip().lower()
+    return "high" if normalized not in {"low", "medium", "high"} else normalized  # type: ignore[return-value]
+
+
+def _normalize_issue_type(value: str | None) -> str:
+    normalized = (value or "Task").strip().lower()
+    return "Story" if normalized == "story" else "Task"
 
 
 def _dedupe_risks(risks: list[RiskFlag]) -> list[RiskFlag]:
     deduped: list[RiskFlag] = []
-    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    seen: set[tuple[str, str]] = set()
     for risk in risks:
-        key = (risk.category, risk.message, tuple(risk.affected_items))
+        key = (risk.category.lower(), risk.message.lower())
         if key in seen:
             continue
         seen.add(key)
@@ -651,107 +905,31 @@ def _dedupe_risks(risks: list[RiskFlag]) -> list[RiskFlag]:
     return deduped
 
 
-def _normalize_priority(value: object) -> PriorityLevel:
-    normalized = str(value or "").strip().lower()
-    if normalized in {"low", "medium", "high"}:
-        return normalized  # type: ignore[return-value]
-    if normalized in {"critical", "highest"}:
-        return "high"
-    return "medium"
-
-
-def _normalize_issue_type(value: object) -> str:
-    normalized = str(value or "").strip().lower()
-    return "Task" if normalized == "task" else "Story"
-
-
-def _infer_required_skills(task_text: str, employee_skills: list[str]) -> list[str]:
-    normalized_text = _slugify(task_text)
-    matches: list[str] = []
-    for skill in employee_skills:
-        skill_key = _slugify(skill)
-        if skill_key and (skill_key in normalized_text or skill_key.replace("-", " ") in task_text.lower()):
-            matches.append(skill)
-    if matches:
-        return sorted({skill for skill in matches})
-
-    heuristics = {
-        "frontend": ["frontend", "ui", "react", "web"],
-        "backend": ["backend", "api", "service"],
-        "jira": ["jira", "atlassian"],
-        "integration": ["integration", "handoff", "sync"],
-        "ai": ["ai", "llm", "model"],
-        "python": ["python", "fastapi"],
-        "automation": ["automation", "workflow", "pipeline"],
-    }
-    return [
-        skill
-        for skill, keywords in heuristics.items()
-        if any(keyword in task_text.lower() for keyword in keywords)
-    ]
-
-
-def _estimate_story_points(task_text: str, required_skills: list[str]) -> int:
-    priority = _infer_priority(task_text)
-    score = 1
-    score += 2 if priority == "high" else 1 if priority == "medium" else 0
-    score += min(len(required_skills), 2)
-    score += len(
-        re.findall(
-            r"\b(api|integration|workflow|migration|analytics|auth|dashboard|approval|jira)\b",
-            task_text.lower(),
-        )
-    )
-    if len(task_text.split()) > 18:
-        score += 1
-    if len(task_text.split()) > 35:
-        score += 1
-
-    if score <= 2:
-        return 1
-    if score == 3:
-        return 2
-    if score == 4:
-        return 3
-    if score in (5, 6):
-        return 5
-    return 8
-
-
-def _infer_title(task_text: str) -> str:
-    clipped = task_text.strip().split(".")[0]
-    words = clipped.split()
-    if len(words) <= 8:
-        return clipped.rstrip(".")
-    return " ".join(words[:8]).rstrip(".")
-
-
-def _infer_description(task_text: str) -> str:
-    text = task_text.strip()
-    return text if text.endswith(".") else f"{text}."
-
-
-def _fallback_estimation_rationale(task_text: str) -> str:
-    return (
-        "Estimated from the task priority, the implementation complexity implied by the request, "
-        f"and the coordination suggested by the task details: {task_text[:80].strip()}."
-    )
-
-
-def _issue_url(base_url: str | None, issue_key: str) -> str | None:
-    if not base_url:
-        return None
-    return f"{base_url.rstrip('/')}/browse/{issue_key}"
-
-
 def _slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
 
 
-def _infer_priority(task_text: str) -> PriorityLevel:
-    text = task_text.lower()
-    if any(token in text for token in ("urgent", "critical", "immediately", "blocker", "must")):
-        return "high"
-    if any(token in text for token in ("nice to have", "later", "follow-up", "polish")):
-        return "low"
-    return "medium"
+def _issue_url(base_url: str, issue_key: str) -> str:
+    return f"{base_url}/browse/{issue_key}"
+
+
+def _result_from_sync_state(base_url: str, plan: SprintPlan, sync_state: JiraSyncState) -> JiraHandoffResult:
+    issues = [
+        JiraIssueResult(
+            key=sync_state.child_issue_keys[item.task_id],
+            url=_issue_url(base_url, sync_state.child_issue_keys[item.task_id]),
+            summary=item.title,
+            issue_type=item.jira_issue_type,
+            assignment_status=item.assignment_status,
+            assignee=item.recommended_assignee,
+            task_id=item.task_id,
+        )
+        for item in plan.plan_items
+        if item.task_id in sync_state.child_issue_keys
+    ]
+    return JiraHandoffResult(
+        key=sync_state.epic_key or "UNKNOWN",
+        url=_issue_url(base_url, sync_state.epic_key or "UNKNOWN"),
+        issues=issues,
+        sync_state=sync_state,
+    )
